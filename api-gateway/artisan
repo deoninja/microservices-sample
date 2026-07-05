@@ -1,0 +1,22 @@
+<?php
+
+use Illuminate\Contracts\Console\Kernel;
+use Symfony\Component\Console\Input\ArgvInput;
+use Symfony\Component\Console\Output\ConsoleOutput;
+
+define('LARAVEL_START', microtime(true));
+
+require __DIR__.'/vendor/autoload.php';
+
+$app = require __DIR__.'/bootstrap/app.php';
+
+$kernel = $app->make(Kernel::class);
+
+$input = new ArgvInput;
+$output = new ConsoleOutput;
+
+$status = $kernel->handle($input, $output);
+
+$kernel->terminate($input, $output);
+
+exit($status);
