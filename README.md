@@ -196,3 +196,13 @@ All requests go through the gateway at `http://localhost:8000/api`.
 | GET    | /users                | Yes  | List users           |
 
 > **Auth** = requires `Authorization: Bearer <token>` header.
+
+## Date
+```bash
+July 04, 2026
+```
+
+## By
+```bash
+Deo Trinidad
+```
