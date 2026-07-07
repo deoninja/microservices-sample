@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Helpers\ProxyHelper;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 
 /*
  * app/Http/Controllers/GatewayController.php — Request Proxy Controller
@@ -40,14 +41,12 @@ class GatewayController extends Controller
     {
         $headers = [];
 
-        // Check if JwtMiddleware stored user data on this request.
-        // This will be present on protected routes, absent on public ones.
-        if ($request->attributes->has('jwt_user')) {
-            $user = $request->attributes->get('jwt_user');
-
-            // 'sub' is the JWT standard claim for "subject" — the user's ID.
-            $headers['X-User-Id']   = $user['sub']  ?? '';
-            $headers['X-User-Role'] = $user['role'] ?? 'user';
+        // Passport's auth:api middleware resolves the user via the bearer token.
+        // Use that to forward identity headers to downstream microservices.
+        $user = $request->user() ?? Auth::user();
+        if ($user) {
+            $headers['X-User-Id']   = $user->id;
+            $headers['X-User-Role'] = $user->role ?? 'user';
         }
 
         return $headers;

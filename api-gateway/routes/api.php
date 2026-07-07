@@ -53,7 +53,7 @@ Route::prefix('auth')->group(function () {
 // immediately and the controller never executes.
 //
 // These proxy to User Service at http://localhost:3001/api/users/...
-Route::prefix('users')->middleware('jwt.auth')->group(function () {
+Route::prefix('users')->middleware('auth:api')->group(function () {
     Route::get('/',      [GatewayController::class, 'getUsers']);   // list all users
     Route::get('/{id}',  [GatewayController::class, 'getUser']);    // get one user by ID
     Route::post('/',     [GatewayController::class, 'createUser']); // create a new user
@@ -75,9 +75,9 @@ Route::prefix('products')->group(function () {
     Route::get('/{id}',  [GatewayController::class, 'getProduct']);  // public — get one product
 
     // The three write routes require a token — middleware is applied per-route here
-    Route::post('/',     [GatewayController::class, 'createProduct'])->middleware('jwt.auth');
-    Route::put('/{id}',  [GatewayController::class, 'updateProduct'])->middleware('jwt.auth');
-    Route::delete('/{id}', [GatewayController::class, 'deleteProduct'])->middleware('jwt.auth');
+    Route::post('/',     [GatewayController::class, 'createProduct'])->middleware('auth:api');
+    Route::put('/{id}',  [GatewayController::class, 'updateProduct'])->middleware('auth:api');
+    Route::delete('/{id}', [GatewayController::class, 'deleteProduct'])->middleware('auth:api');
 });
 
 // ── Order Routes — ALL protected by JWT ──────────────────────────────────────
@@ -87,7 +87,7 @@ Route::prefix('products')->group(function () {
 // orders so regular users only see their own, while admins see all.
 //
 // These proxy to Order Service at http://localhost:3003/api/orders/...
-Route::prefix('orders')->middleware('jwt.auth')->group(function () {
+Route::prefix('orders')->middleware('auth:api')->group(function () {
     Route::get('/',              [GatewayController::class, 'getOrders']);       // list orders
     Route::get('/{id}',          [GatewayController::class, 'getOrder']);        // get one order
     Route::post('/',             [GatewayController::class, 'createOrder']);     // place new order

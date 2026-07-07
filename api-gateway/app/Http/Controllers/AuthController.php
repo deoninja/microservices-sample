@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Helpers\ProxyHelper;
-use Firebase\JWT\JWT;
+use App\Models\User;
 use Illuminate\Http\Request;
 
 /*
@@ -63,44 +63,34 @@ class AuthController extends Controller
             ], 401);
         }
 
-        // Step 3 — Build the JWT payload.
+        // Step 3 — Find or create a local user record for Passport.
         //
-        // The payload is the data we embed inside the token. Anyone can READ
-        // a JWT payload (it's base64 encoded, not encrypted), but they cannot
-        // MODIFY it without invalidating the signature.
+        // Passport issues tokens against a local User model, so we need a
+        // matching record in our SQLite database. The User Service is the
+        // source of truth for credentials — we only store enough metadata
+        // (id, username, name, email, role) to issue and validate tokens.
+        $userData = $result['body'];
+
+        $localUser = User::updateOrCreate(
+            ['id' => $userData['id']],
+            [
+                'username' => $userData['username'],
+                'name'     => $userData['name'],
+                'email'    => $userData['email'],
+                'role'     => $userData['role'] ?? 'user',
+            ]
+        );
+
+        // Step 4 — Issue a Passport personal access token.
         //
-        // Standard JWT claims used here:
-        //   'sub' (subject)  → the user's unique ID — identifies who the token belongs to
-        //   'iat' (issued at) → Unix timestamp of when the token was created
-        //   'exp' (expiry)   → Unix timestamp of when the token stops being valid
-        $user   = $result['body'];
-        $secret = config('services.jwt.secret');  // the signing key from .env
-        $ttl    = config('services.jwt.ttl', 86400); // 86400 seconds = 24 hours
+        // createToken() generates a new access token tied to this user,
+        // stores it in the oauth_access_tokens table, and returns the
+        // plain-text token exactly once in the response.
+        $token = $localUser->createToken('api-access-token')->accessToken;
 
-        $payload = [
-            'sub'      => $user['id'],                // user ID — used as X-User-Id downstream
-            'username' => $user['username'],
-            'name'     => $user['name'],
-            'email'    => $user['email'],
-            'role'     => $user['role'] ?? 'user',    // 'admin' or 'user'
-            'iat'      => time(),                     // current Unix timestamp
-            'exp'      => time() + $ttl,              // expiry = now + 24 hours
-        ];
-
-        // Step 4 — Sign the token.
-        //
-        // JWT::encode() takes the payload, signs it with the secret using HS256
-        // (HMAC-SHA256), and returns a compact token string in three parts:
-        //   header.payload.signature
-        // e.g. eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOjF9.abc123
-        $token = JWT::encode($payload, $secret, 'HS256');
-
-        // Return the token and user data.
-        // The frontend stores the token in localStorage and sends it as
-        // "Authorization: Bearer <token>" on every subsequent request.
         return response()->json([
             'token' => $token,
-            'user'  => $user,
+            'user'  => $userData,
         ]);
     }
 
@@ -139,12 +129,21 @@ class AuthController extends Controller
 
         // Step 3 — If the User Service returned an error (e.g. username already taken),
         // pass the error response through with the original status code.
-        // This lets the client see the exact error message from the User Service.
         if (!$result['success']) {
             return response()->json($result['body'], $result['status']);
         }
 
-        // Success — return the newly created user with HTTP 201 Created.
-        return response()->json($result['body'], 201);
+        // Step 4 — Create a matching local user record for Passport.
+        $userData = $result['body'];
+        User::create([
+            'id'       => $userData['id'],
+            'username' => $userData['username'],
+            'name'     => $userData['name'],
+            'email'    => $userData['email'],
+            'role'     => $userData['role'] ?? 'user',
+        ]);
+
+        // Return the newly created user with HTTP 201 Created.
+        return response()->json($userData, 201);
     }
 }

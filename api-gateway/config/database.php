@@ -1,17 +1,17 @@
 <?php
 
-/*
- * config/database.php — Minimal Database Configuration
- *
- * This API Gateway does not use a database — all data lives in the
- * Node.js microservices. However, Laravel's ConsoleSupportServiceProvider
- * (needed for Artisan commands) requires this file to exist.
- *
- * The 'default' connection is set to 'none' which is never actually used.
- */
-
 return [
-    'default'     => env('DB_CONNECTION', 'none'),
-    'connections' => [],
-    'migrations'  => 'migrations',
+    'default'     => env('DB_CONNECTION', 'sqlite'),
+
+    'connections' => [
+        'sqlite' => [
+            'driver'                  => 'sqlite',
+            'url'                     => env('DATABASE_URL'),
+            'database'                => env('DB_DATABASE', database_path('database.sqlite')),
+            'prefix'                  => '',
+            'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
+        ],
+    ],
+
+    'migrations' => 'migrations',
 ];

@@ -14,8 +14,10 @@
     10 => 'Illuminate\\View\\ViewServiceProvider',
     11 => 'Carbon\\Laravel\\ServiceProvider',
     12 => 'Termwind\\Laravel\\TermwindServiceProvider',
-    13 => 'App\\Providers\\AppServiceProvider',
-    14 => 'App\\Providers\\RouteServiceProvider',
+    13 => 'Laravel\\Passport\\PassportServiceProvider',
+    14 => 'App\\Providers\\AppServiceProvider',
+    15 => 'App\\Providers\\AuthServiceProvider',
+    16 => 'App\\Providers\\RouteServiceProvider',
   ),
   'eager' => 
   array (
@@ -26,8 +28,10 @@
     4 => 'Illuminate\\View\\ViewServiceProvider',
     5 => 'Carbon\\Laravel\\ServiceProvider',
     6 => 'Termwind\\Laravel\\TermwindServiceProvider',
-    7 => 'App\\Providers\\AppServiceProvider',
-    8 => 'App\\Providers\\RouteServiceProvider',
+    7 => 'Laravel\\Passport\\PassportServiceProvider',
+    8 => 'App\\Providers\\AppServiceProvider',
+    9 => 'App\\Providers\\AuthServiceProvider',
+    10 => 'App\\Providers\\RouteServiceProvider',
   ),
   'deferred' => 
   array (

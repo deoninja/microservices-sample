@@ -38,17 +38,6 @@ return [
         'url' => env('ORDER_SERVICE_URL', 'http://localhost:3003'),
     ],
 
-    // JWT (JSON Web Token) settings used by AuthController and JwtMiddleware.
-    'jwt' => [
-        // The secret key used to SIGN tokens on login and VERIFY them on requests.
-        // Both signing and verifying must use the same secret — if they differ,
-        // all tokens will be rejected as invalid.
-        'secret' => env('JWT_SECRET', 'microservices-secret-key-2024'),
 
-        // How long (in seconds) a token stays valid after it is issued.
-        // 86400 seconds = 60 * 60 * 24 = 24 hours.
-        // After this time the token expires and the user must log in again.
-        'ttl' => 86400,
-    ],
 
 ];

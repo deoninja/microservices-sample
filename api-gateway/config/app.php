@@ -30,8 +30,12 @@ return [
         // Needed for Blade error pages and storage paths
         Illuminate\View\ViewServiceProvider::class,
 
+        // OAuth2 server for API token authentication
+        Laravel\Passport\PassportServiceProvider::class,
+
         // App-specific providers
         App\Providers\AppServiceProvider::class,
+        App\Providers\AuthServiceProvider::class,
         App\Providers\RouteServiceProvider::class,
     ],
 ];
