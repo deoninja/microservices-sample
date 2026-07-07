@@ -1,0 +1,1033 @@
+{
+  "info": {
+    "name": "Laravel Gateway API - Microservices Sample",
+    "description": "Postman collection for the Laravel API Gateway. All requests go through the gateway at `localhost:8000` which proxies to the downstream Node.js microservices.\n\n## Authentication\n- `POST /api/auth/login` returns a JWT token + user object.\n- The collection variable `token` is **automatically set** by the Login request's test script.\n- Protected endpoints require `Authorization: Bearer {{token}}`.\n\n## Architecture\n```\nBrowser/Frontend (:3000) → Laravel Gateway (:8000) → Microservices (:3001-:3003)\n```\n\n## Seed Credentials\n| Username | Password | Role |\n|----------|----------|------|\n| admin    | password | admin |\n| john     | password | user  |\n\n## Seed Products (IDs 1-5)\n1. Wireless Headphones ($79.99)\n2. Smart Watch ($199.99)\n3. Laptop Stand ($49.99)\n4. Mechanical Keyboard ($129.99)\n5. USB-C Hub ($34.99)\n\n## Seed Orders\n1. Admin's order (completed) - 1 item\n2. John's order (processing) - 2 items\n3. John's order (pending) - 1 item\n\nValid order statuses: `pending`, `processing`, `completed`, `cancelled`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has status and service fields', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.status).to.eql('ok');",
+                  "  pm.expect(json.service).to.eql('api-gateway');",
+                  "  pm.expect(json.timestamp).to.exist;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/health",
+              "host": ["{{base_url}}"],
+              "path": ["api", "health"]
+            },
+            "description": "Simple health check to confirm the gateway is running. No authentication required."
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"status\": \"ok\",\n  \"service\": \"api-gateway\",\n  \"timestamp\": \"2024-07-07T12:00:00Z\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has token and user', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.token).to.exist;",
+                  "  pm.expect(json.user).to.exist;",
+                  "  pm.expect(json.user.username).to.eql('admin');",
+                  "  pm.expect(json.user.role).to.eql('admin');",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  pm.collectionVariables.set('token', json.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"password\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "login"]
+            },
+            "description": "Authenticate with username and password. Returns a JWT token (auto-saved to `{{token}}`) and user data.\n\nValid credentials:\n- `admin` / `password` (role: admin)\n- `john` / `password` (role: user)"
+          },
+          "response": [
+            {
+              "name": "Success (admin)",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"token\": \"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOjEsInVzZXJuYW1lIjoiYWRtaW4iLCJuYW1lIjoiQWRtaW4gVXNlciIsImVtYWlsIjoiYWRtaW5AZXhhbXBsZS5jb20iLCJyb2xlIjoiYWRtaW4iLCJpYXQiOjE3MjAzNzQyMDAsImV4cCI6MTcyMDQ2MDYwMH0.example\",\n  \"user\": {\n    \"id\": 1,\n    \"username\": \"admin\",\n    \"name\": \"Admin User\",\n    \"email\": \"admin@example.com\",\n    \"role\": \"admin\",\n    \"createdAt\": \"2024-01-01T00:00:00Z\"\n  }\n}"
+            },
+            {
+              "name": "Invalid Credentials",
+              "status": "Unauthorized",
+              "code": 401,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"error\": \"Invalid credentials\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Response has user data without password', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.id).to.exist;",
+                  "  pm.expect(json.username).to.eql('jane');",
+                  "  pm.expect(json.password).to.be.undefined;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"jane\",\n  \"password\": \"secret123\",\n  \"name\": \"Jane Smith\",\n  \"email\": \"jane@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "register"]
+            },
+            "description": "Create a new user account.\n\nValidation rules:\n- `username`: required, min 3 characters, must be unique\n- `password`: required, min 6 characters\n- `name`: required\n- `email`: required, valid email format\n\nNote: Does NOT return a JWT token. Call `/api/auth/login` after registering."
+          },
+          "response": [
+            {
+              "name": "Created",
+              "status": "Created",
+              "code": 201,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"id\": 3,\n  \"username\": \"jane\",\n  \"name\": \"Jane Smith\",\n  \"email\": \"jane@example.com\",\n  \"role\": \"user\",\n  \"createdAt\": \"2024-07-07T12:00:00.000Z\"\n}"
+            },
+            {
+              "name": "Validation Error",
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"message\": \"The given data was invalid.\",\n  \"errors\": {\n    \"username\": [\"The username field is required.\"],\n    \"password\": [\"The password field is required.\"],\n    \"name\": [\"The name field is required.\"],\n    \"email\": [\"The email field is required.\"]\n  }\n}"
+            },
+            {
+              "name": "Duplicate Username",
+              "status": "Conflict",
+              "code": 409,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"error\": \"Username already exists\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "List All Users",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response is an array', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json).to.be.an('array');",
+                  "  pm.expect(json.length).to.be.at.least(2);",
+                  "});",
+                  "",
+                  "pm.test('Passwords are not exposed', () => {",
+                  "  const json = pm.response.json();",
+                  "  json.forEach(user => {",
+                  "    pm.expect(user.password).to.be.undefined;",
+                  "  });",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{token}}", "type": "string" }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/users",
+              "host": ["{{base_url}}"],
+              "path": ["api", "users"]
+            },
+            "description": "List all registered users. Passwords are stripped from the response.\n\nRequires `Authorization: Bearer {{token}}`."
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "[\n  {\n    \"id\": 1,\n    \"username\": \"admin\",\n    \"name\": \"Admin User\",\n    \"email\": \"admin@example.com\",\n    \"role\": \"admin\",\n    \"createdAt\": \"2024-01-01T00:00:00Z\"\n  },\n  {\n    \"id\": 2,\n    \"username\": \"john\",\n    \"name\": \"John Doe\",\n    \"email\": \"john@example.com\",\n    \"role\": \"user\",\n    \"createdAt\": \"2024-01-02T00:00:00Z\"\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "Get User by ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has correct user data', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.id).to.eql(1);",
+                  "  pm.expect(json.username).to.eql('admin');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{token}}", "type": "string" }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/users/1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "users", "1"]
+            },
+            "description": "Get a single user by their numeric ID.\n\nPath parameters:\n- `id` (number): User ID"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"id\": 1,\n  \"username\": \"admin\",\n  \"name\": \"Admin User\",\n  \"email\": \"admin@example.com\",\n  \"role\": \"admin\",\n  \"createdAt\": \"2024-01-01T00:00:00Z\"\n}"
+            },
+            {
+              "name": "Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"error\": \"User not found\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('User was created correctly', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.username).to.eql('bob');",
+                  "  pm.expect(json.role).to.eql('user');",
+                  "  pm.expect(json.password).to.be.undefined;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{token}}", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"bob\",\n  \"password\": \"bobpass123\",\n  \"name\": \"Bob Wilson\",\n  \"email\": \"bob@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/users",
+              "host": ["{{base_url}}"],
+              "path": ["api", "users"]
+            },
+            "description": "Create a new user (admin operation).\n\nValidation rules:\n- `username` (required): must be unique\n- `password` (required)\n- `name` (required)\n- `email` (required)"
+          },
+          "response": [
+            {
+              "name": "Created",
+              "status": "Created",
+              "code": 201,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"id\": 4,\n  \"username\": \"bob\",\n  \"name\": \"Bob Wilson\",\n  \"email\": \"bob@example.com\",\n  \"role\": \"user\",\n  \"createdAt\": \"2024-07-07T12:00:00.000Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('User was updated correctly', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.name).to.eql('Bob Updated');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{token}}", "type": "string" }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Bob Updated\",\n  \"email\": \"bob.new@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/users/4",
+              "host": ["{{base_url}}"],
+              "path": ["api", "users", "4"]
+            },
+            "description": "Update an existing user's fields.\n\nAllowed fields: `name`, `email`, `password`\n\nPath parameters:\n- `id` (number): User ID to update"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"id\": 4,\n  \"username\": \"bob\",\n  \"name\": \"Bob Updated\",\n  \"email\": \"bob.new@example.com\",\n  \"role\": \"user\",\n  \"createdAt\": \"2024-07-07T12:00:00.000Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Delete User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 204', () => {",
+                  "  pm.response.to.have.status(204);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{token}}", "type": "string" }
+              ]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/users/4",
+              "host": ["{{base_url}}"],
+              "path": ["api", "users", "4"]
+            },
+            "description": "Delete a user by their ID.\n\nPath parameters:\n- `id` (number): User ID to delete\n\nReturns 204 No Content on success."
+          },
+          "response": [
+            {
+              "name": "No Content",
+              "status": "No Content",
+              "code": 204,
+              "header": [],
+              "body": ""
+            },
+            {
+              "name": "Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"error\": \"User not found\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Products",
+      "item": [
+        {
+          "name": "List All Products",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response is an array with 5 products', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json).to.be.an('array');",
+                  "  pm.expect(json.length).to.eql(5);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/products",
+              "host": ["{{base_url}}"],
+              "path": ["api", "products"]
+            },
+            "description": "List all products. Public endpoint — no authentication required."
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "[\n  {\n    \"id\": 1,\n    \"name\": \"Wireless Headphones\",\n    \"price\": 79.99,\n    \"description\": \"Noise-canceling Bluetooth headphones with 30hr battery\",\n    \"stock\": 45,\n    \"createdAt\": \"2024-01-01T00:00:00Z\"\n  },\n  {\n    \"id\": 2,\n    \"name\": \"Smart Watch\",\n    \"price\": 199.99,\n    \"description\": \"Fitness tracker with heart rate monitor and GPS\",\n    \"stock\": 30,\n    \"createdAt\": \"2024-01-02T00:00:00Z\"\n  },\n  {\n    \"id\": 3,\n    \"name\": \"Laptop Stand\",\n    \"price\": 49.99,\n    \"description\": \"Adjustable aluminum stand for 13-17 inch laptops\",\n    \"stock\": 100,\n    \"createdAt\": \"2024-01-03T00:00:00Z\"\n  },\n  {\n    \"id\": 4,\n    \"name\": \"Mechanical Keyboard\",\n    \"price\": 129.99,\n    \"description\": \"RGB backlit mechanical keyboard with Cherry MX switches\",\n    \"stock\": 25,\n    \"createdAt\": \"2024-01-04T00:00:00Z\"\n  },\n  {\n    \"id\": 5,\n    \"name\": \"USB-C Hub\",\n    \"price\": 34.99,\n    \"description\": \"7-in-1 USB-C hub with HDMI, USB 3.0, SD card reader\",\n    \"stock\": 60,\n    \"createdAt\": \"2024-01-05T00:00:00Z\"\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "Search Products",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Search returns filtered results', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json).to.be.an('array');",
+                  "  json.forEach(p => {",
+                  "    pm.expect(p.name.toLowerCase()).to.include('keyboard');",
+                  "  });",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/products?search=keyboard",
+              "host": ["{{base_url}}"],
+              "path": ["api", "products"],
+              "query": [
+                { "key": "search", "value": "keyboard" }
+              ]
+            },
+            "description": "Search products by name (case-insensitive partial match). Public endpoint.\n\nQuery parameters:\n- `search` (string, optional): Filter products whose name contains this value"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "[\n  {\n    \"id\": 4,\n    \"name\": \"Mechanical Keyboard\",\n    \"price\": 129.99,\n    \"description\": \"RGB backlit mechanical keyboard with Cherry MX switches\",\n    \"stock\": 25,\n    \"createdAt\": \"2024-01-04T00:00:00Z\"\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "Get Product by ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response is the correct product', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.id).to.eql(1);",
+                  "  pm.expect(json.name).to.eql('Wireless Headphones');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/products/1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "products", "1"]
+            },
+            "description": "Get a single product by its numeric ID. Public endpoint.\n\nPath parameters:\n- `id` (number): Product ID"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"id\": 1,\n  \"name\": \"Wireless Headphones\",\n  \"price\": 79.99,\n  \"description\": \"Noise-canceling Bluetooth headphones with 30hr battery\",\n  \"stock\": 45,\n  \"createdAt\": \"2024-01-01T00:00:00Z\"\n}"
+            },
+            {
+              "name": "Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"error\": \"Product not found\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create Product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Product was created correctly', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.name).to.eql('Webcam HD');",
+                  "  pm.expect(json.price).to.eql(89.99);",
+                  "  pm.expect(json.stock).to.eql(50);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{token}}", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Webcam HD\",\n  \"price\": 89.99,\n  \"description\": \"1080p webcam with built-in microphone and autofocus\",\n  \"stock\": 50\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/products",
+              "host": ["{{base_url}}"],
+              "path": ["api", "products"]
+            },
+            "description": "Create a new product. Requires authentication.\n\nValidation rules:\n- `name` (required)\n- `price` (required, must be positive)\n- `description` (optional)\n- `stock` (optional, must be non-negative integer)"
+          },
+          "response": [
+            {
+              "name": "Created",
+              "status": "Created",
+              "code": 201,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"id\": 6,\n  \"name\": \"Webcam HD\",\n  \"price\": 89.99,\n  \"description\": \"1080p webcam with built-in microphone and autofocus\",\n  \"stock\": 50,\n  \"createdAt\": \"2024-07-07T12:00:00.000Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Product was updated correctly', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.price).to.eql(74.99);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{token}}", "type": "string" }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"price\": 74.99,\n  \"stock\": 35\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/products/1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "products", "1"]
+            },
+            "description": "Update an existing product's fields. Requires authentication.\n\nAllowed fields: `name`, `price`, `description`, `stock`\n\nPath parameters:\n- `id` (number): Product ID to update"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"id\": 1,\n  \"name\": \"Wireless Headphones\",\n  \"price\": 74.99,\n  \"description\": \"Noise-canceling Bluetooth headphones with 30hr battery\",\n  \"stock\": 35,\n  \"createdAt\": \"2024-01-01T00:00:00Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Delete Product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 204', () => {",
+                  "  pm.response.to.have.status(204);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{token}}", "type": "string" }
+              ]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/products/6",
+              "host": ["{{base_url}}"],
+              "path": ["api", "products", "6"]
+            },
+            "description": "Delete a product by its ID. Requires authentication.\n\nPath parameters:\n- `id` (number): Product ID to delete\n\nReturns 204 No Content on success."
+          },
+          "response": [
+            {
+              "name": "No Content",
+              "status": "No Content",
+              "code": 204,
+              "header": [],
+              "body": ""
+            },
+            {
+              "name": "Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"error\": \"Product not found\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Orders",
+      "item": [
+        {
+          "name": "List Orders",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response is an array', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{token}}", "type": "string" }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/orders",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "List orders. Admins see all orders; regular users see only their own.\n\nRequires `Authorization: Bearer {{token}}`."
+          },
+          "response": [
+            {
+              "name": "Success (admin sees all)",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "[\n  {\n    \"id\": 1,\n    \"userId\": 1,\n    \"customerName\": \"Admin User\",\n    \"items\": [\n      { \"productId\": 1, \"name\": \"Wireless Headphones\", \"quantity\": 1, \"price\": 79.99 }\n    ],\n    \"total\": 79.99,\n    \"status\": \"completed\",\n    \"createdAt\": \"2024-01-15T10:30:00Z\"\n  },\n  {\n    \"id\": 2,\n    \"userId\": 2,\n    \"customerName\": \"John Doe\",\n    \"items\": [\n      { \"productId\": 2, \"name\": \"Smart Watch\", \"quantity\": 1, \"price\": 199.99 },\n      { \"productId\": 4, \"name\": \"Mechanical Keyboard\", \"quantity\": 1, \"price\": 129.99 }\n    ],\n    \"total\": 329.98,\n    \"status\": \"processing\",\n    \"createdAt\": \"2024-01-20T14:00:00Z\"\n  },\n  {\n    \"id\": 3,\n    \"userId\": 2,\n    \"customerName\": \"John Doe\",\n    \"items\": [\n      { \"productId\": 5, \"name\": \"USB-C Hub\", \"quantity\": 2, \"price\": 34.99 }\n    ],\n    \"total\": 69.98,\n    \"status\": \"pending\",\n    \"createdAt\": \"2024-01-25T09:15:00Z\"\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "Get Order by ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response is the correct order', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.id).to.eql(1);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{token}}", "type": "string" }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/orders/1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders", "1"]
+            },
+            "description": "Get a single order by its ID. Regular users can only view their own orders; admins can view any.\n\nPath parameters:\n- `id` (number): Order ID"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"id\": 1,\n  \"userId\": 1,\n  \"customerName\": \"Admin User\",\n  \"items\": [\n    { \"productId\": 1, \"name\": \"Wireless Headphones\", \"quantity\": 1, \"price\": 79.99 }\n  ],\n  \"total\": 79.99,\n  \"status\": \"completed\",\n  \"createdAt\": \"2024-01-15T10:30:00Z\"\n}"
+            },
+            {
+              "name": "Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"error\": \"Order not found\"\n}"
+            },
+            {
+              "name": "Access Denied",
+              "status": "Forbidden",
+              "code": 403,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"error\": \"Access denied\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create Order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Order was created correctly', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.items.length).to.eql(2);",
+                  "  pm.expect(json.total).to.eql(114.98);",
+                  "  pm.expect(json.status).to.eql('pending');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{token}}", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerName\": \"Admin User\",\n  \"items\": [\n    {\n      \"productId\": 3,\n      \"name\": \"Laptop Stand\",\n      \"quantity\": 1,\n      \"price\": 49.99\n    },\n    {\n      \"productId\": 5,\n      \"name\": \"USB-C Hub\",\n      \"quantity\": 1,\n      \"price\": 34.99\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/orders",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "Place a new order. The authenticated user's ID is automatically assigned as the order owner.\n\nValidation rules:\n- `customerName` (optional, defaults to 'Customer')\n- `items` (required): Array of items, each with `name`, `quantity` (>= 1), and `price`"
+          },
+          "response": [
+            {
+              "name": "Created",
+              "status": "Created",
+              "code": 201,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"id\": 4,\n  \"userId\": 1,\n  \"customerName\": \"Admin User\",\n  \"items\": [\n    { \"productId\": 3, \"name\": \"Laptop Stand\", \"quantity\": 1, \"price\": 49.99 },\n    { \"productId\": 5, \"name\": \"USB-C Hub\", \"quantity\": 1, \"price\": 34.99 }\n  ],\n  \"total\": 84.98,\n  \"status\": \"pending\",\n  \"createdAt\": \"2024-07-07T12:00:00.000Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Order Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Status was updated correctly', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.status).to.eql('completed');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{token}}", "type": "string" }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"completed\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/orders/4/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders", "4", "status"]
+            },
+            "description": "Update an order's status.\n\nValid statuses: `pending`, `processing`, `completed`, `cancelled`\n\nPath parameters:\n- `id` (number): Order ID to update"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"id\": 4,\n  \"userId\": 1,\n  \"customerName\": \"Admin User\",\n  \"items\": [\n    { \"productId\": 3, \"name\": \"Laptop Stand\", \"quantity\": 1, \"price\": 49.99 },\n    { \"productId\": 5, \"name\": \"USB-C Hub\", \"quantity\": 1, \"price\": 34.99 }\n  ],\n  \"total\": 84.98,\n  \"status\": \"completed\",\n  \"createdAt\": \"2024-07-07T12:00:00.000Z\"\n}"
+            },
+            {
+              "name": "Invalid Status",
+              "status": "Bad Request",
+              "code": 400,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"error\": \"Invalid status. Must be one of: pending, processing, completed, cancelled\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

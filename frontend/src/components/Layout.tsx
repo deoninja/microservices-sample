@@ -50,7 +50,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       </nav>
       <main className="main-content">{children}</main>
       <footer className="footer">
-        <p>MicroStore &copy; 2024 — Demo Microservices Architecture</p>
+        <p>MicroStore &copy; 2026 — Demo Microservices Architecture</p>
       </footer>
     </div>
   )

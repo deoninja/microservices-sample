@@ -122,7 +122,14 @@ class GatewayController extends Controller
         }
 
         $result = ProxyHelper::forward('GET', $url, [], $this->getHeaders($request));
-        return response()->json($result['body'], $result['status']);
+
+        // Remove createdAt from every product
+        $products = collect($result['body'])->map(function ($product) {
+            unset($product['createdAt']);
+            return $product;
+        });
+
+        return response()->json($products, $result['status']);
     }
 
     // GET /api/products/{id} → Product Service GET /api/products/{id}
