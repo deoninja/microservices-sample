@@ -9,7 +9,7 @@ This document explains how the Laravel API Gateway works — what it does, how e
 Instead of the frontend talking directly to three separate services (users, products, orders), it talks to **one single entry point** — the API Gateway.
 
 The gateway is responsible for:
-- **Authentication** — checking who you are (JWT tokens)
+- **Authentication** — checking who you are (Passport tokens)
 - **Routing** — deciding which microservice should handle your request
 - **Proxying** — forwarding the request and sending the response back
 
@@ -32,43 +32,89 @@ API Gateway :8000          ← you only talk to this
 ```
 api-gateway/
 ├── app/
-│   ├── Auth/
-│   │   └── IdentityProvider.php          # builds X-User-Id / X-User-Role headers (SRP)
-│   ├── Contracts/
-│   │   └── ServiceClientInterface.php    # contract for all microservice clients (DIP)
 │   ├── Exceptions/
-│   │   └── Handler.php                   # converts exceptions to JSON responses
-│   ├── Http/
+│   │   └── Handler.php                        # converts exceptions to JSON responses
+│   ├── Gateway/                                # INFRASTRUCTURE LAYER (Adapters)
+│   │   ├── Contracts/                          # Ports (Interfaces)
+│   │   │   ├── UserClientInterface.php
+│   │   │   ├── ProductClientInterface.php
+│   │   │   └── OrderClientInterface.php
+│   │   ├── Clients/                            # Concrete Adapters (Laravel Http facade)
+│   │   │   ├── HttpUserClient.php
+│   │   │   ├── HttpProductClient.php
+│   │   │   ├── HttpOrderClient.php
+│   │   │   └── IdentityProvider.php            # builds X-User-Id / X-User-Role headers
+│   │   └── DTOs/                               # Data Transfer Objects
+│   │       ├── UserData.php
+│   │       ├── ProductData.php
+│   │       └── OrderData.php
+│   ├── Http/                                   # PRESENTATION LAYER
 │   │   ├── Controllers/
-│   │   │   ├── AuthController.php        # handles login & register
-│   │   │   ├── UserController.php        # user CRUD proxy (SRP)
-│   │   │   ├── ProductController.php     # product CRUD proxy (SRP)
-│   │   │   └── OrderController.php       # order CRUD proxy (SRP)
-│   │   └── Kernel.php                    # registers middleware aliases
+│   │   │   ├── Controller.php                  # base controller + serialize helpers
+│   │   │   ├── AuthController.php              # handles login & register
+│   │   │   ├── UserController.php              # user CRUD proxy
+│   │   │   ├── ProductController.php           # product CRUD proxy
+│   │   │   └── OrderController.php             # order CRUD proxy
+│   │   ├── Kernel.php                          # registers middleware aliases
+│   │   └── Requests/                           # Input Validation (Form Requests)
+│   │       ├── LoginRequest.php
+│   │       └── RegisterRequest.php
 │   ├── Models/
-│   │   └── User.php                      # Passport-authenticatable user model
+│   │   └── User.php                            # Passport-authenticatable user model
 │   ├── Providers/
-│   │   ├── AppServiceProvider.php        # registers service bindings (DIP)
+│   │   ├── AppServiceProvider.php              # registers DI bindings
 │   │   ├── AuthServiceProvider.php
-│   │   └── RouteServiceProvider.php      # loads routes/api.php
-│   └── Services/
-│       ├── BaseService.php               # abstract HTTP client (base for all services)
-│       ├── UserService.php               # User Service proxy (SRP)
-│       ├── ProductService.php            # Product Service proxy (SRP)
-│       └── OrderService.php              # Order Service proxy (SRP)
+│   │   └── RouteServiceProvider.php            # loads routes/api.php
+│   └── Services/                               # APPLICATION / ORCHESTRATION LAYER
+│       └── AuthService.php                     # orchestrates login/register flow
 ├── bootstrap/
-│   └── app.php                           # boots the Laravel app
+│   └── app.php                                 # boots the Laravel app
 ├── config/
-│   ├── app.php                           # app config + service providers
-│   ├── cors.php                          # CORS allowed origins
-│   └── services.php                      # microservice URLs
+│   ├── app.php                                 # app config + service providers
+│   ├── auth.php                                # guard configuration (Passport)
+│   ├── cors.php                                # CORS allowed origins
+│   └── services.php                            # microservice URLs
 ├── routes/
-│   └── api.php                           # all route definitions
+│   └── api.php                                 # all route definitions
 └── ...
 
 # At the project root:
-docker-compose.yml                       # Docker env vars including APP_KEY
+docker-compose.yml                               # Docker env vars including APP_KEY
 ```
+
+### Layer Architecture
+
+```
+┌────────────────────────────────────────────────────┐
+│               PRESENTATION LAYER                    │
+│  Controllers (thin entry points)                    │
+│  Form Requests (input validation)                   │
+│  ───── depends on Application & Infrastructure ──── │
+├────────────────────────────────────────────────────┤
+│               APPLICATION LAYER                      │
+│  AuthService (orchestrates login/register flow)      │
+│  ───── depends on Infrastructure (Ports/interfaces)  │
+├────────────────────────────────────────────────────┤
+│              INFRASTRUCTURE LAYER                     │
+│  Contracts (Ports — interfaces)                     │
+│  Http*Clients (Adapters — Laravel Http facade)      │
+│  DTOs (Data Transfer Objects)                        │
+│  IdentityProvider (header builder)                   │
+└────────────────────────────────────────────────────┘
+        │
+        ▼
+  External microservices (User, Product, Order)
+```
+
+### Clean Architecture Rules Enforced
+
+| Rule | How it's applied |
+|------|-----------------|
+| **Dependencies point inward** | Presentation → Application → Infrastructure. Controllers never talk directly to HTTP. |
+| **Controllers are thin** | They validate input (via FormRequests), delegate to services/clients, and return responses. |
+| **Interfaces (Ports) are owned by Infrastructure** | Contracts live in `Gateway/Contracts/` — the inner layers depend on abstractions, not concrete HTTP implementations. |
+| **DTOs cross boundaries** | Data flows as typed `UserData`, `ProductData`, `OrderData` between layers instead of loose arrays. |
+| **Application layer orchestrates** | `AuthService` coordinates the multi-step login/register flow across clients and models. |
 
 ---
 
@@ -152,16 +198,19 @@ Registered below the AuthServiceProvider, this provides OAuth2 token authenticat
 
 ### Application Service Provider (`App\Providers\AppServiceProvider`)
 
-This provider registers the microservice proxy clients and identity provider as singletons in the container, following the Dependency Inversion Principle:
+This provider wires the DI container so controllers receive the correct infrastructure-layer adapters behind interface abstractions:
 
 ```php
 public function register(): void
 {
-    // Each microservice client is a singleton — same instance reused across requests
-    $this->app->singleton(UserService::class);
-    $this->app->singleton(ProductService::class);
-    $this->app->singleton(OrderService::class);
+    // Infrastructure — Port-to-Adapter bindings
+    $this->app->singleton(UserClientInterface::class, fn () => new HttpUserClient());
+    $this->app->singleton(ProductClientInterface::class, fn () => new HttpProductClient());
+    $this->app->singleton(OrderClientInterface::class, fn () => new HttpOrderClient());
     $this->app->singleton(IdentityProvider::class);
+
+    // Application — orchestration services (auto-resolved)
+    $this->app->singleton(AuthService::class);
 
     // Override the exception handler for JSON-only responses
     $this->app->bind(
@@ -171,23 +220,17 @@ public function register(): void
 }
 ```
 
-Because these services are bound here, controllers can declare them in their constructors and Laravel's container automatically resolves (injects) them.
-
 ---
 
 ## Step 4 — Configuration (`config/services.php`)
 
-This file stores the URLs of each microservice and the JWT secret. Values come from `.env` so they can be changed per environment (local vs Docker vs production).
+This file stores the URLs of each microservice.
 
 ```php
 return [
     'user_service'    => ['url' => env('USER_SERVICE_URL',    'http://localhost:3001')],
     'product_service' => ['url' => env('PRODUCT_SERVICE_URL', 'http://localhost:3002')],
     'order_service'   => ['url' => env('ORDER_SERVICE_URL',   'http://localhost:3003')],
-    'jwt' => [
-        'secret' => env('JWT_SECRET', 'microservices-secret-key-2024'),
-        'ttl'    => 86400,   // token expires after 24 hours
-    ],
 ];
 ```
 
@@ -196,7 +239,6 @@ return [
 USER_SERVICE_URL=http://localhost:3001
 PRODUCT_SERVICE_URL=http://localhost:3002
 ORDER_SERVICE_URL=http://localhost:3003
-JWT_SECRET=microservices-secret-key-2024
 ```
 
 **Docker `docker-compose.yml` overrides these to use service names:**
@@ -219,7 +261,7 @@ return [
 ];
 ```
 
-The frontend at `http://localhost:3000` is the only allowed origin. If you deploy the frontend to a different URL, update `FRONTEND_URL` in `.env`.
+The frontend at `http://localhost:3000` is the only allowed origin.
 
 ---
 
@@ -236,6 +278,10 @@ GET /api/health
 // Auth
 POST /api/auth/login
 POST /api/auth/register
+
+// Products (read-only)
+GET /api/products
+GET /api/products/{id}
 ```
 
 ### Protected routes (require JWT token via Passport)
@@ -248,9 +294,7 @@ POST   /api/users
 PUT    /api/users/{id}
 DELETE /api/users/{id}
 
-// Products — read is public, write is protected
-GET    /api/products          ← no token needed
-GET    /api/products/{id}     ← no token needed
+// Products — write operations protected
 POST   /api/products          ← auth:api (token required)
 PUT    /api/products/{id}     ← auth:api (token required)
 DELETE /api/products/{id}     ← auth:api (token required)
@@ -280,7 +324,7 @@ Incoming request with Authorization: Bearer <token>
       │
       ├── Invalid/expired → throws AuthenticationException → 401 response
       │
-      └── Valid → resolves the User model from oauth_clients and the token's user_id
+      └── Valid → resolves the User model from the token's user_id
                     │
                     ▼
 4. Authenticated user is available via:
@@ -289,75 +333,115 @@ Incoming request with Authorization: Bearer <token>
    - Auth::id()             ← user's ID
 ```
 
-**Token payload (Passport personal access token):**
-```json
+---
+
+## Step 6 — Infrastructure Layer: DTOs (`app/Gateway/DTOs/`)
+
+Data Transfer Objects provide typed, immutable representations of data coming from microservices. They ensure type safety at every layer boundary.
+
+```php
+class UserData
 {
-  "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9...",
-  "user": { "id": 1, "username": "admin", "name": "Admin User", "email": "admin@example.com", "role": "admin" }
+    public readonly int $id;
+    public readonly string $username;
+    public readonly string $name;
+    public readonly string $email;
+    public readonly string $role;
+
+    public function __construct(...) { ... }
+
+    // Named constructor — creates a DTO from a JSON response array
+    public static function fromArray(array $data): self { ... }
+
+    // Serialize back to array for JSON response
+    public function toArray(): array { ... }
 }
 ```
+
+| DTO | Properties | Used by |
+|-----|-----------|---------|
+| `UserData` | id, username, name, email, role | AuthService, UserClient |
+| `ProductData` | id, name, price, description, stock | ProductClient |
+| `OrderData` | id, userId, customerName, items, total, status, createdAt | OrderClient |
 
 ---
 
-## Step 6 — Services Layer (`app/Services/`)
+## Step 7 — Infrastructure Layer: Contracts (`app/Gateway/Contracts/`)
 
-Following the **Single Responsibility Principle**, each microservice has its own dedicated service class. Controllers delegate all HTTP communication to these services.
-
-### Architecture
-
-```
-Controller (request handling)          ← SRP: only receives requests, returns responses
-    │
-    │  depends on abstraction (DIP)
-    ▼
-ServiceClientInterface                 ← contract defines get/post/put/delete
-    │
-    │  implemented by
-    ▼
-BaseService (abstract)                 ← shared HTTP logic (Guzzle, error handling)
-    │
-    ├── UserService    → http://user-service:3001
-    ├── ProductService → http://product-service:3002
-    └── OrderService   → http://order-service:3003
-```
-
-### `ServiceClientInterface` (`app/Contracts/ServiceClientInterface.php`)
-
-This is the contract that all microservice clients must implement. By depending on this abstraction, controllers are decoupled from the concrete HTTP implementation (Dependency Inversion Principle).
+These are the **Ports** in Clean Architecture terminology — interfaces that define how the Application and Presentation layers communicate with the outside world.
 
 ```php
-interface ServiceClientInterface
+interface UserClientInterface
 {
-    public function getBaseUrl(): string;
-    public function get(string $path, array $headers = []): array;
-    public function post(string $path, array $data = [], array $headers = []): array;
-    public function put(string $path, array $data = [], array $headers = []): array;
-    public function delete(string $path, array $headers = []): array;
+    public function login(string $username, string $password): array;
+    public function register(string $username, string $password, string $name, string $email): array;
+    public function getAll(array $headers = []): array;
+    public function getById(int $id, array $headers = []): array;
+    public function create(array $data, array $headers = []): array;
+    public function update(int $id, array $data, array $headers = []): array;
+    public function remove(int $id, array $headers = []): array;
 }
 ```
 
-### `BaseService` (`app/Services/BaseService.php`)
+Each interface returns a consistent `{status, body, success}` array where `body` contains a DTO (or collection of DTOs) on success, or a raw error array on failure.
 
-The abstract base class that implements the common HTTP logic:
-- Creates a Guzzle client with sensible defaults (10s timeout, 5s connect timeout)
-- Handles JSON encoding of request bodies
-- Decodes JSON responses
-- Catches `GuzzleException` and returns a 502 "Microservice unavailable" fallback
-- All methods return a consistent `{status, body, success}` array
+---
 
-### Concrete Service Classes
+## Step 8 — Infrastructure Layer: Adapters (`app/Gateway/Clients/`)
 
-Each service extends `BaseService` and only needs to provide its base URL and service-specific methods:
+These are the **Concrete Adapters** — implementations of the Port interfaces using Laravel's `Http` facade.
 
-| Service | Base URL | Key methods |
-|---------|----------|-------------|
-| `UserService` | `config('services.user_service.url')` | `login()`, `register()`, `getAll()`, `getById()`, `create()`, `update()`, `remove()` |
-| `ProductService` | `config('services.product_service.url')` | `getAll(search)`, `getById()`, `create()`, `update()`, `remove()` |
-| `OrderService` | `config('services.order_service.url')` | `getAll()`, `getById()`, `create()`, `updateStatus()` |
+```php
+class HttpUserClient implements UserClientInterface
+{
+    private string $baseUrl;
 
-### `IdentityProvider` (`app/Auth/IdentityProvider.php`)
+    public function __construct()
+    {
+        $this->baseUrl = config('services.user_service.url', 'http://localhost:3001');
+    }
 
-A dedicated class with the **single responsibility** of building the identity headers (`X-User-Id`, `X-User-Role`) that get forwarded to microservices:
+    public function login(string $username, string $password): array
+    {
+        $response = Http::timeout(10)
+            ->post("{$this->baseUrl}/api/users/login", [
+                'username' => $username,
+                'password' => $password,
+            ]);
+
+        $body = $response->json() ?? [];
+        $success = $response->successful();
+
+        return [
+            'status'  => $response->status(),
+            'body'    => $success ? UserData::fromArray($body) : $body,
+            'success' => $success,
+        ];
+    }
+    // ...
+}
+```
+
+| Client | Interface | Base URL |
+|--------|-----------|----------|
+| `HttpUserClient` | `UserClientInterface` | `config('services.user_service.url')` |
+| `HttpProductClient` | `ProductClientInterface` | `config('services.product_service.url')` |
+| `HttpOrderClient` | `OrderClientInterface` | `config('services.order_service.url')` |
+
+### What happens when a microservice is down?
+
+The `Http` facade throws an `Illuminate\Http\Client\ConnectionException`. The **Exception Handler** catches it and returns `502 Bad Gateway`:
+
+```json
+{
+  "error": "Microservice unavailable",
+  "message": "A downstream service could not be reached."
+}
+```
+
+### Identity Provider (`app/Gateway/Clients/IdentityProvider.php`)
+
+Reads the authenticated user from the request and builds identity headers to forward to downstream services:
 
 ```php
 class IdentityProvider
@@ -377,115 +461,134 @@ class IdentityProvider
 
 ---
 
-## Step 7 — Authentication Controller (`app/Http/Controllers/AuthController.php`)
+## Step 9 — Application Layer: AuthService (`app/Services/AuthService.php`)
 
-Uses **Dependency Injection**: the `UserService` is injected via the constructor (not static calls).
+This service sits in the Application/Orchestration layer. It coordinates the login/register flow across multiple actors:
+
+1. **UserClientInterface** (Infrastructure) — communicates with User Service
+2. **User model** (Infrastructure) — creates/updates local Passport records
+3. **Passport** — issues personal access tokens
 
 ```php
-class AuthController extends Controller
+class AuthService
 {
-    private UserService $userService;
+    private UserClientInterface $userClient;
 
-    public function __construct(UserService $userService)
+    public function __construct(UserClientInterface $userClient) { ... }
+
+    public function login(string $username, string $password): array
     {
-        $this->userService = $userService;
+        $result = $this->userClient->login($username, $password);
+        if (!$result['success']) {
+            return ['success' => false, 'status' => 401, 'body' => ['error' => 'Invalid credentials']];
+        }
+
+        $userData = $result['body'];  // UserData DTO
+
+        // Synchronize local user for Passport
+        $localUser = User::updateOrCreate(
+            ['id' => $userData->id],
+            $userData->toArray()
+        );
+
+        // Issue Passport personal access token
+        $token = $localUser->createToken('api-access-token')->accessToken;
+
+        return ['success' => true, 'token' => $token, 'user' => $userData];
     }
+
+    public function register(...): array { ... }
 }
-```
-
-### Login flow
-
-```
-POST /api/auth/login
-{ "username": "admin", "password": "password" }
-      │
-      ▼
-1. Validate input (username + password required)
-      │
-      ▼
-2. Forward credentials via UserService->login()
-   → POST http://user-service:3001/api/users/login
-      │
-      ├── Error → respond 401 "Invalid credentials"
-      │
-      └── Success → create/update local User record, issue Passport token
-            │
-            ▼
-3. Return { token, user } to the browser
-```
-
-**Successful response:**
-```json
-{
-  "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9...",
-  "user": {
-    "id": 1,
-    "username": "admin",
-    "name": "Admin User",
-    "email": "admin@example.com",
-    "role": "admin"
-  }
-}
-```
-
-### Register flow
-
-```
-POST /api/auth/register
-{ "username": "...", "password": "...", "name": "...", "email": "..." }
-      │
-      ▼
-1. Validate input (username min 3 chars, password min 6 chars, valid email)
-      │
-      ▼
-2. Forward to User Service
-   POST http://localhost:3001/api/users/register
-      │
-      ├── User Service returns error (e.g. username taken) → pass error through
-      │
-      └── Success → return 201 with new user object
 ```
 
 ---
 
-## Step 8 — Per-Service Controllers (SRP + ISP)
+## Step 10 — Presentation Layer: Controllers
 
-Instead of one monolithic `GatewayController` handling every microservice, we now have **one controller per service**, following the **Single Responsibility Principle** and **Interface Segregation Principle**:
+Controllers are **thin entry points**. They follow this pattern:
 
-| Controller | Handles routes for | Injected dependencies |
-|------------|-------------------|----------------------|
-| `UserController` | `/api/users/*` | `UserService`, `IdentityProvider` |
-| `ProductController` | `/api/products/*` | `ProductService`, `IdentityProvider` |
-| `OrderController` | `/api/orders/*` | `OrderService`, `IdentityProvider` |
+1. Receive the HTTP request
+2. Validate input (via FormRequest classes for auth)
+3. Delegate to Application/Infrastructure layers
+4. Return the response (serializing DTOs via inherited `serialize()` / `serializeCollection()` helpers)
 
-### Example — UserController
+### Form Request Validation (`app/Http/Requests/`)
+
+Login and Register requests use Laravel Form Request classes for validation:
 
 ```php
-class UserController extends Controller
+class LoginRequest extends FormRequest
 {
-    private UserService $userService;
-    private IdentityProvider $identityProvider;
+    public function authorize(): bool { return true; }
 
-    public function __construct(UserService $userService, IdentityProvider $identityProvider)
+    public function rules(): array
     {
-        // Dependencies injected by the container (DIP)
-        $this->userService = $userService;
-        $this->identityProvider = $identityProvider;
+        return [
+            'username' => 'required|string',
+            'password' => 'required|string',
+        ];
     }
-
-    public function index(Request $request)
-    {
-        $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->userService->getAll($headers);
-        return response()->json($result['body'], $result['status']);
-    }
-    // ... show, store, update, destroy follow the same pattern
 }
 ```
 
-### How headers are passed downstream
+### AuthController
 
-The `IdentityProvider` builds the identity headers, and the service classes forward them to the microservice via HTTP requests.
+```php
+class AuthController extends Controller
+{
+    private AuthService $authService;
+
+    public function __construct(AuthService $authService) { ... }
+
+    public function login(LoginRequest $request)
+    {
+        $result = $this->authService->login(
+            $request->input('username'),
+            $request->input('password')
+        );
+
+        if (!$result['success']) {
+            return response()->json($result['body'], $result['status'] ?? 401);
+        }
+
+        return response()->json([
+            'token' => $result['token'],
+            'user'  => $result['user']->toArray(),
+        ]);
+    }
+}
+```
+
+### Per-Service Controllers
+
+| Controller | Injected dependencies | Handles |
+|------------|----------------------|---------|
+| `UserController` | `UserClientInterface`, `IdentityProvider` | `/api/users/*` |
+| `ProductController` | `ProductClientInterface`, `IdentityProvider` | `/api/products/*` |
+| `OrderController` | `OrderClientInterface`, `IdentityProvider` | `/api/orders/*` |
+
+Each controller uses the inherited `serialize()` / `serializeCollection()` helpers (defined in base `Controller`) to convert DTOs to JSON-safe arrays:
+
+```php
+class Controller extends BaseController
+{
+    use AuthorizesRequests, ValidatesRequests;
+
+    protected function serialize(mixed $value): mixed
+    {
+        if (is_object($value) && method_exists($value, 'toArray')) {
+            return $value->toArray();
+        }
+        return $value;
+    }
+
+    protected function serializeCollection(mixed $items): array
+    {
+        if (!is_array($items)) { return []; }
+        return array_map(fn ($item) => $this->serialize($item), $items);
+    }
+}
+```
 
 ### Example — GET /api/orders
 
@@ -505,52 +608,17 @@ IdentityProvider::getHeaders($request)
   → reads $request->user() → X-User-Id: 2, X-User-Role: user
       │
       ▼
-OrderService::getAll($headers)
-  → GET http://order-service:3003/api/orders
+OrderClientInterface::getAll($headers)
+  → HttpOrderClient sends GET http://order-service:3003/api/orders
   → with X-User-Id and X-User-Role headers
       │
       ▼
-Order Service responds with orders for user 2
+Order Service responds with orders
       │
       ▼
-OrderController returns the same response to the browser
+OrderController serializes DTOs via serializeCollection()
+  → returns JSON response to browser
 ```
-
----
-
-## Step 9 — Base Service (`app/Services/BaseService.php`)
-
-This is the abstract class that makes the actual HTTP call to a microservice via Guzzle. All concrete services (`UserService`, `ProductService`, `OrderService`) extend it.
-
-Every request returns a consistent array:
-
-| Key       | Type    | Description                              |
-|-----------|---------|------------------------------------------|
-| `status`  | int     | HTTP status code from the microservice   |
-| `body`    | array   | Decoded JSON response body               |
-| `success` | bool    | `true` if status < 400                   |
-
-**What happens if a microservice is down?**
-
-Guzzle throws a `GuzzleException`. `BaseService::request()` catches it, logs the error, and returns:
-
-```json
-{
-  "status": 502,
-  "body": { "error": "Microservice unavailable", "message": "..." },
-  "success": false
-}
-```
-
-The gateway then sends a `502 Bad Gateway` response to the browser instead of crashing.
-
-**Guzzle client settings (set in BaseService constructor):**
-
-| Setting           | Value | Meaning                                      |
-|-------------------|-------|----------------------------------------------|
-| `timeout`         | 10s   | Give up waiting for a response after 10s     |
-| `connect_timeout` | 5s    | Give up trying to connect after 5s           |
-| `http_errors`     | false | Don't throw exceptions on 4xx/5xx responses  |
 
 ---
 
@@ -577,25 +645,25 @@ Browser sends:
   │     → reads Bearer token                   │
   │     → validates against oauth_access_tokens │
   │     → resolves User model (id:2)           │
-  │     → sets Auth::user() on the container   │
+  │     → sets Auth::user()                    │
   │                                             │
   │  4. OrderController::index()                │
   │     → IdentityProvider::getHeaders()        │
-  │       → $request->user() returns user id=2 │
-  │         X-User-Id: 2, X-User-Role: user    │
+  │       → X-User-Id: 2, X-User-Role: user    │
   │                                             │
-  │  5. OrderService::getAll($headers)          │
-  │     → BaseService.request('GET', ...)       │
-  │     → GET http://order-service:3003/orders  │
-  │       with X-User-Id and X-User-Role        │
+  │  5. OrderClientInterface::getAll()          │
+  │     → HttpOrderClient GET                   │
+  │       http://order-service:3003/api/orders  │
+  │       with X-User-Id / X-User-Role          │
+  │                                             │
+  │  6. Controller serializes OrderData DTOs    │
+  │     → serializeCollection()                 │
   └─────────────────────────────────────────────┘
               │
               ▼
   ┌─────────────────────────────┐
   │   Order Service :3003       │
-  │                             │
-  │  reads X-User-Id: 2         │
-  │  returns orders for user 2  │
+  │  returns orders             │
   └─────────────────────────────┘
               │
               ▼
@@ -616,15 +684,12 @@ The exception handler catches exceptions thrown during request processing and co
 | `404` | `NotFoundHttpException` | `{"error":"Not found","message":"..."}` |
 | `405` | `MethodNotAllowedHttpException` | `{"error":"Method not allowed","message":"..."}` |
 | `422` | `ValidationException` | `{"error":"Validation failed","errors":{...}}` |
+| `502` | `ConnectionException` | `{"error":"Microservice unavailable","message":"..."}` |
 | `500` | Any other exception | `{"error":"Server error","message":"..."}` |
-
-**Important:** The `AuthenticationException` handler returns `401` (not `500`) when the `auth:api` middleware rejects an invalid or missing token. This is the correct HTTP status for unauthenticated requests.
 
 ---
 
 ## Environment Variables Reference
-
-All variables live in `api-gateway/.env`. Docker Compose overrides them via the `environment:` block in `docker-compose.yml`.
 
 ### Must be set
 
@@ -653,7 +718,6 @@ All variables live in `api-gateway/.env`. Docker Compose overrides them via the 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FRONTEND_URL` | `http://localhost:3000` | Allowed CORS origin |
-| `JWT_SECRET` | `microservices-secret-key-2024` | Legacy JWT secret (used by user service for token validation) |
 
 ---
 

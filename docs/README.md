@@ -9,7 +9,7 @@ Each doc explains what the file does, why it's written the way it is, and what e
 
 | File | What it covers |
 |------|----------------|
-| [api-gateway.md](./api-gateway.md) | Laravel API Gateway — boot process, middleware, JWT auth, routing, proxying |
+| [api-gateway.md](./api-gateway.md) | Laravel API Gateway — Clean Architecture: Presentation, Application, Infrastructure layers |
 | [user-service.md](./user-service.md) | User Service (Node.js) — Express setup, in-memory store, login/register, CRUD routes |
 | [product-service.md](./product-service.md) | Product Service (Node.js) — Express setup, product store, search, CRUD routes |
 | [order-service.md](./order-service.md) | Order Service (Node.js) — Express setup, order store, ownership checks, status updates |
@@ -27,11 +27,18 @@ Browser (React :3000)
     ▼
 Laravel API Gateway (:8000)
     │
-    │  1. CORS middleware checks the origin
-    │  2. auth:api middleware validates the Bearer token via Passport
-    │     (on protected routes — products GET routes are public)
-    │  3. GatewayController reads authenticated user via $request->user()
-    │  4. ProxyHelper sends the HTTP request via Guzzle with X-User-Id headers
+    │  PRESENTATION LAYER (Controllers + FormRequests)
+    │    1. CORS middleware checks the origin
+    │    2. auth:api middleware validates the Bearer token via Passport
+    │    3. Controllers delegate to Application/Infrastructure layers
+    │
+    │  APPLICATION LAYER (AuthService)
+    │    4. AuthService orchestrates login/register across clients + Passport
+    │
+    │  INFRASTRUCTURE LAYER (Http*Clients, IdentityProvider, DTOs)
+    │    5. Http*Client sends HTTP requests via Laravel Http facade
+    │    6. DTOs (UserData, ProductData, OrderData) type-check the data
+    │    7. IdentityProvider builds X-User-Id / X-User-Role headers
     │
     ├──► User Service (:3001)    — users, login, register
     ├──► Product Service (:3002) — product catalog
@@ -44,32 +51,42 @@ Laravel API Gateway (:8000)
 - **Proxy pattern** — the gateway never stores data itself; it only forwards requests and returns responses
 - **In-memory stores** — all three Node.js services use plain JavaScript arrays as their "database"; data resets on restart
 - **Public vs protected routes** — product GET routes are public; everything else requires a Bearer token validated by Passport
+- **Clean Architecture layers** — Presentation (controllers), Application (AuthService), Infrastructure (clients, DTOs). Dependencies always point inward.
 
 ## Recent changes
 
-### SOLID Refactoring
+### Clean Architecture Refactoring
 
-The API Gateway was refactored to follow SOLID principles:
+The API Gateway was refactored from SOLID services to a full Clean Architecture structure:
 
-| Principle | How it was applied |
-|-----------|-------------------|
-| **S**ingle Responsibility | Each microservice has its own controller (`UserController`, `ProductController`, `OrderController`) and service (`UserService`, `ProductService`, `OrderService`). Identity header building extracted to `IdentityProvider`. |
-| **O**pen/Closed | New microservices can be added by creating new controllers and services without modifying existing code. |
-| **L**iskov Substitution | All service classes extend `BaseService` and implement `ServiceClientInterface` — they can be swapped freely. |
-| **I**nterface Segregation | Each controller has only the methods it needs. No monolithic `GatewayController` with unrelated methods. |
-| **D**ependency Inversion | Controllers depend on injected service abstractions (`UserService`, `ProductService`, etc.) via constructor injection, not on static helper calls. |
+| Layer | Directory | Purpose |
+|-------|-----------|---------|
+| **Presentation** | `app/Http/Controllers/` | Thin entry points — validate, delegate, return |
+| **Presentation** | `app/Http/Requests/` | Input validation via Form Request classes |
+| **Application** | `app/Services/` | Orchestration — AuthService coordinates login/register |
+| **Infrastructure** | `app/Gateway/Contracts/` | Ports — interfaces defining service contracts |
+| **Infrastructure** | `app/Gateway/Clients/` | Adapters — concrete HTTP implementations using Laravel Http facade |
+| **Infrastructure** | `app/Gateway/Clients/IdentityProvider.php` | Builds X-User-Id / X-User-Role headers |
+| **Infrastructure** | `app/Gateway/DTOs/` | Typed data transfer objects (UserData, ProductData, OrderData) |
 
-**New file structure:**
-- `app/Contracts/ServiceClientInterface.php` — contract for all microservice clients
-- `app/Services/BaseService.php` — abstract HTTP client with shared Guzzle logic
-- `app/Services/UserService.php`, `ProductService.php`, `OrderService.php` — one service per microservice
-- `app/Auth/IdentityProvider.php` — builds X-User-Id / X-User-Role headers
-- `app/Http/Controllers/UserController.php`, `ProductController.php`, `OrderController.php` — one controller per service
+**New files:**
+- `app/Gateway/Contracts/UserClientInterface.php`, `ProductClientInterface.php`, `OrderClientInterface.php`
+- `app/Gateway/Clients/HttpUserClient.php`, `HttpProductClient.php`, `HttpOrderClient.php`
+- `app/Gateway/Clients/IdentityProvider.php` — moved from `app/Auth/`
+- `app/Gateway/DTOs/UserData.php`, `ProductData.php`, `OrderData.php`
+- `app/Services/AuthService.php` — orchestration layer
+- `app/Http/Requests/LoginRequest.php`, `RegisterRequest.php` — Form Request validation
 
 **Removed:**
-- `app/Helpers/ProxyHelper.php` — replaced by `BaseService`
+- `app/Contracts/ServiceClientInterface.php` — replaced by per-service interfaces in `Gateway/Contracts/`
+- `app/Services/BaseService.php` — replaced by `Gateway/Clients/Http*Client` classes
+- `app/Services/UserService.php`, `ProductService.php`, `OrderService.php` — replaced by `Gateway/Clients/`
+- `app/Auth/IdentityProvider.php` — moved to `Gateway/Clients/`
+- `app/Helpers/ProxyHelper.php` — replaced by `Http*Client` classes
 - `app/Http/Controllers/GatewayController.php` — split into separate controllers per service
-- `routes/api.php` — updated to use new controllers
+
+### Fixed: Error handling for microservice connection failures
+Added `ConnectionException` handling to `app/Exceptions/Handler.php` — returns `502 Bad Gateway` when a microservice is unreachable.
 
 ### Fixed: `Target class [auth] does not exist`
 Added `Illuminate\Auth\AuthServiceProvider` to `config/app.php` providers list.

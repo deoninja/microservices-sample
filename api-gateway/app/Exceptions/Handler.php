@@ -4,6 +4,7 @@ namespace App\Exceptions;
 
 use Illuminate\Foundation\Exceptions\Handler as ExceptionHandler;
 use Illuminate\Auth\AuthenticationException;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Exceptions\MethodNotAllowedHttpException;
 use Illuminate\Http\Exceptions\NotFoundHttpException;
 use Illuminate\Validation\ValidationException;
@@ -43,6 +44,14 @@ class Handler extends ExceptionHandler
                 'error'   => 'Unauthenticated',
                 'message' => 'Authentication is required to access this resource.',
             ], 401);
+        }
+
+        // 502 — microservice unreachable (connection timeout, DNS failure, etc.)
+        if ($e instanceof ConnectionException) {
+            return response()->json([
+                'error'   => 'Microservice unavailable',
+                'message' => 'A downstream service could not be reached.',
+            ], 502);
         }
 
         // All other exceptions — return 500 with the message in debug mode

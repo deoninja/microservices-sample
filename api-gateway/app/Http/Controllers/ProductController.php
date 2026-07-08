@@ -2,28 +2,25 @@
 
 namespace App\Http\Controllers;
 
-use App\Auth\IdentityProvider;
-use App\Services\ProductService;
+use App\Gateway\Clients\IdentityProvider;
+use App\Gateway\Contracts\ProductClientInterface;
 use Illuminate\Http\Request;
 
 /*
- * app/Http/Controllers/ProductController.php — Product Proxy Controller
+ * app/Http/Controllers/ProductController.php — Product Endpoint (Presentation Layer)
  *
- * SOLID Principles applied:
- *   - Single Responsibility: ONLY handles product-related proxy requests.
- *   - Interface Segregation: Product-specific methods are isolated from
- *     unrelated user and order methods.
- *   - Dependency Inversion: Dependencies injected via constructor.
+ * Clean Architecture:
+ *   Presentation Layer — Thin entry point.
  */
 
 class ProductController extends Controller
 {
-    private ProductService $productService;
+    private ProductClientInterface $productClient;
     private IdentityProvider $identityProvider;
 
-    public function __construct(ProductService $productService, IdentityProvider $identityProvider)
+    public function __construct(ProductClientInterface $productClient, IdentityProvider $identityProvider)
     {
-        $this->productService = $productService;
+        $this->productClient = $productClient;
         $this->identityProvider = $identityProvider;
     }
 
@@ -34,14 +31,12 @@ class ProductController extends Controller
     {
         $search  = $request->get('search', '');
         $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->productService->getAll($search ?: null, $headers);
+        $result  = $this->productClient->getAll($search ?: null, $headers);
 
-        $products = collect($result['body'])->map(function ($product) {
-            unset($product['createdAt']);
-            return $product;
-        });
-
-        return response()->json($products, $result['status']);
+        return response()->json(
+            $this->serializeCollection($result['body']),
+            $result['status']
+        );
     }
 
     /**
@@ -50,12 +45,12 @@ class ProductController extends Controller
     public function show(Request $request, int $id)
     {
         $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->productService->getById($id, $headers);
+        $result  = $this->productClient->getById($id, $headers);
 
-        $productArray = (array) $result['body'];
-        unset($productArray['createdAt']);
-
-        return response()->json($productArray, $result['status']);
+        return response()->json(
+            $this->serialize($result['body']),
+            $result['status']
+        );
     }
 
     /**
@@ -64,9 +59,12 @@ class ProductController extends Controller
     public function store(Request $request)
     {
         $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->productService->create($request->all(), $headers);
+        $result  = $this->productClient->create($request->all(), $headers);
 
-        return response()->json($result['body'], $result['status']);
+        return response()->json(
+            $this->serialize($result['body']),
+            $result['status']
+        );
     }
 
     /**
@@ -75,9 +73,12 @@ class ProductController extends Controller
     public function update(Request $request, int $id)
     {
         $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->productService->update($id, $request->all(), $headers);
+        $result  = $this->productClient->update($id, $request->all(), $headers);
 
-        return response()->json($result['body'], $result['status']);
+        return response()->json(
+            $this->serialize($result['body']),
+            $result['status']
+        );
     }
 
     /**
@@ -86,8 +87,10 @@ class ProductController extends Controller
     public function destroy(Request $request, int $id)
     {
         $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->productService->remove($id, $headers);
+        $result  = $this->productClient->remove($id, $headers);
 
         return response()->json($result['body'], $result['status']);
     }
+
 }
+

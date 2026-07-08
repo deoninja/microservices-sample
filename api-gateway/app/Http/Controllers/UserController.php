@@ -2,31 +2,31 @@
 
 namespace App\Http\Controllers;
 
-use App\Auth\IdentityProvider;
-use App\Services\UserService;
+use App\Gateway\Clients\IdentityProvider;
+use App\Gateway\Contracts\UserClientInterface;
 use Illuminate\Http\Request;
 
 /*
- * app/Http/Controllers/UserController.php — User Proxy Controller
+ * app/Http/Controllers/UserController.php — User Endpoint (Presentation Layer)
  *
- * SOLID Principles applied:
- *   - Single Responsibility: ONLY handles user-related proxy requests.
- *     Previously these methods were mixed with product and order logic
- *     in GatewayController.
- *   - Interface Segregation: Clients only depend on the methods they need.
- *     A developer working on users doesn't need to see order methods.
- *   - Dependency Inversion: Dependencies (UserService, IdentityProvider) are
- *     injected via constructor, not created statically.
+ * Clean Architecture:
+ *   Presentation Layer — Thin entry point. Only:
+ *   1. Receives HTTP request
+ *   2. Delegates to Infrastructure layer (UserClientInterface)
+ *   3. Returns JSON response
+ *
+ * No business logic, no HTTP calls, no service orchestration.
+ * All of that lives in the Application (AuthService) or Infrastructure (Clients) layers.
  */
 
 class UserController extends Controller
 {
-    private UserService $userService;
+    private UserClientInterface $userClient;
     private IdentityProvider $identityProvider;
 
-    public function __construct(UserService $userService, IdentityProvider $identityProvider)
+    public function __construct(UserClientInterface $userClient, IdentityProvider $identityProvider)
     {
-        $this->userService = $userService;
+        $this->userClient = $userClient;
         $this->identityProvider = $identityProvider;
     }
 
@@ -36,9 +36,12 @@ class UserController extends Controller
     public function index(Request $request)
     {
         $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->userService->getAll($headers);
+        $result  = $this->userClient->getAll($headers);
 
-        return response()->json($result['body'], $result['status']);
+        return response()->json(
+            $this->serializeCollection($result['body']),
+            $result['status']
+        );
     }
 
     /**
@@ -47,9 +50,12 @@ class UserController extends Controller
     public function show(Request $request, int $id)
     {
         $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->userService->getById($id, $headers);
+        $result  = $this->userClient->getById($id, $headers);
 
-        return response()->json($result['body'], $result['status']);
+        return response()->json(
+            $this->serialize($result['body']),
+            $result['status']
+        );
     }
 
     /**
@@ -58,9 +64,12 @@ class UserController extends Controller
     public function store(Request $request)
     {
         $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->userService->create($request->all(), $headers);
+        $result  = $this->userClient->create($request->all(), $headers);
 
-        return response()->json($result['body'], $result['status']);
+        return response()->json(
+            $this->serialize($result['body']),
+            $result['status']
+        );
     }
 
     /**
@@ -69,9 +78,12 @@ class UserController extends Controller
     public function update(Request $request, int $id)
     {
         $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->userService->update($id, $request->all(), $headers);
+        $result  = $this->userClient->update($id, $request->all(), $headers);
 
-        return response()->json($result['body'], $result['status']);
+        return response()->json(
+            $this->serialize($result['body']),
+            $result['status']
+        );
     }
 
     /**
@@ -80,8 +92,10 @@ class UserController extends Controller
     public function destroy(Request $request, int $id)
     {
         $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->userService->remove($id, $headers);
+        $result  = $this->userClient->remove($id, $headers);
 
         return response()->json($result['body'], $result['status']);
     }
+
 }
+

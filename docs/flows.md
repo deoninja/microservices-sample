@@ -21,7 +21,7 @@ Content-Type: application/json
 ### Step-by-step
 
 ```
-1. Browser / curl sends POST /api/auth/login to the gateway
+1. Browser sends POST /api/auth/login to the gateway
 
 2. Laravel Kernel runs global middleware on the request:
    - HandleCors      → adds Access-Control-Allow-Origin header
@@ -30,20 +30,19 @@ Content-Type: application/json
 3. RouteServiceProvider matches the route to AuthController::login()
    - No auth:api middleware on this route — login is public
 
-4. AuthController::login() runs:
+4. LoginRequest (Form Request) validates input:
+   - username: required, must be a string
+   - password: required, must be a string
+   - If either is missing → 422 Unprocessable Entity
 
-   a) Validates the request body
-      - username: required, must be a string
-      - password: required, must be a string
-      - If either is missing → 422 Unprocessable Entity
+5. AuthController::login() delegates to AuthService (Application Layer)
 
-   b) Reads USER_SERVICE_URL from config (http://user-service:3001 in Docker)
+6. AuthService::login() uses UserClientInterface (Infrastructure Port):
+   → HttpUserClient (Infrastructure Adapter) sends:
+     POST http://user-service:3001/api/users/login
+     Body: { "username": "john", "password": "password" }
 
-   c) UserService::login() sends:
-      POST http://user-service:3001/api/users/login
-      Body: { "username": "john", "password": "password" }
-
-5. User Service (Node.js :3001) receives the request:
+7. User Service (Node.js :3001) receives the request:
    - Looks up john in the in-memory store by username
    - Compares the password
    - If wrong → returns 401 { "error": "Invalid credentials" }
@@ -51,18 +50,13 @@ Content-Type: application/json
      { "id": 2, "username": "john", "name": "John Doe",
        "email": "john@example.com", "role": "user", ... }
 
-6. Back in AuthController:
+8. Back in AuthService:
    - If User Service returned an error → gateway returns 401 to the browser
-   - If success → creates/updates a local User model (for Passport token issuance)
-     and issues a Passport personal access token:
+   - If success → HttpUserClient wraps the response in a UserData DTO:
+     UserData::fromArray($body)
 
-   a) Updates or creates a local user record:
-      User::updateOrCreate(['id' => $userData['id']], [
-          'username' => $userData['username'],
-          'name'     => $userData['name'],
-          'email'    => $userData['email'],
-          'role'     => $userData['role'] ?? 'user',
-      ]);
+   a) Synchronizes local user record for Passport:
+      User::updateOrCreate(['id' => $userData->id], $userData->toArray())
 
    b) Issues a Passport personal access token:
       $token = $localUser->createToken('api-access-token')->accessToken;
@@ -70,14 +64,14 @@ Content-Type: application/json
    c) The token is signed with RSA keys (oauth-private.key / oauth-public.key)
       stored in storage/
 
-7. Gateway returns 200 to the browser:
+9. Gateway returns 200 to the browser:
    {
      "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9...",
      "user": { "id": 2, "username": "john", ... }
    }
 
-8. Frontend stores token in localStorage
-   Every future request includes: Authorization: Bearer eyJ0eXAiOiJKV1Qi...
+10. Frontend stores token in localStorage
+    Every future request includes: Authorization: Bearer eyJ0eXAiOiJKV1Qi...
 ```
 
 ### What can go wrong
@@ -116,24 +110,26 @@ GET http://localhost:8000/api/products?search=keyboard
    - No auth:api middleware on GET /products — it is public
 
 4. ProductController::index() runs:
+   - Reads optional ?search= parameter from the request
+   - Delegates to ProductClientInterface::getAll()
 
-   a) ProductService::getAll($search) sends:
-      GET http://product-service:3002/api/products
-      (with ?search=keyboard if a search term is provided)
+5. HttpProductClient (Infrastructure Adapter) sends:
+   GET http://product-service:3002/api/products
+   (with ?search=keyboard if a search term is provided)
 
-5. Product Service (Node.js :3002) receives the request:
+6. Product Service (Node.js :3002) receives the request:
    - If no search → returns all 5 products from the in-memory store
    - If search=keyboard → filters products where name contains "keyboard"
      (case-insensitive)
-   - Returns 200 with a JSON array:
-     [
-       { "id": 4, "name": "Mechanical Keyboard", "price": 129.99,
-         "description": "...", "stock": 25, "createdAt": "..." },
-       ...
-     ]
+   - Returns 200 with a JSON array
 
-6. ProductController returns the Product Service response directly to the browser
-   - Same status code, same body — the gateway doesn't modify the data
+7. HttpProductClient wraps each item in a ProductData DTO:
+   array_map(fn ($item) => ProductData::fromArray($item), $body)
+
+8. ProductController serializes DTOs via serializeCollection():
+   Calls toArray() on each ProductData → returns JSON-safe array
+
+9. Browser receives 200 with the product list
 ```
 
 ### What can go wrong
@@ -197,7 +193,7 @@ Content-Type: application/json
    a) IdentityProvider::getHeaders($request) calls $request->user():
       returns ['X-User-Id' => '2', 'X-User-Role' => 'user']
 
-   b) OrderService::create($data, $headers) sends:
+   b) OrderClientInterface::getAll() delegates to HttpOrderClient:
       POST http://order-service:3003/api/orders
       Headers: X-User-Id: 2, X-User-Role: user
       Body: { "customerName": "John Doe", "items": [...] }
@@ -213,23 +209,19 @@ Content-Type: application/json
 
    c) Calculates the total:
       (1 × 129.99) + (2 × 34.99) = 199.97
-      Math.round(199.97 × 100) / 100 = 199.97
 
    d) Creates the order in the in-memory store:
-      {
-        "id":           4,
-        "userId":       2,
-        "customerName": "John Doe",
-        "items":        [...],
-        "total":        199.97,
-        "status":       "pending",
-        "createdAt":    "2024-07-04T12:00:00.000Z"
-      }
+      { "id": 4, "userId": 2, "customerName": "John Doe",
+        "items": [...], "total": 199.97, "status": "pending",
+        "createdAt": "2024-07-04T12:00:00.000Z" }
 
    e) Returns 201 Created with the new order object
 
-7. OrderController returns the Order Service response to the browser
-   - 201 status, full order object in the body
+7. HttpOrderClient wraps the response in an OrderData DTO:
+   OrderData::fromArray($body)
+
+8. OrderController serializes via serialize() (calls toArray())
+   → returns 201 with the order JSON to the browser
 ```
 
 ### What can go wrong
@@ -255,17 +247,18 @@ POST /api/auth/login     GET /api/products        POST /api/orders
         │                  No token needed          Needs token
         │                       │                   from login
         ▼                       ▼                        ▼
-  User Service           Product Service          auth:api (Passport)
-  verifies password      returns catalog          validates token
-        │                       │                        │
-  Gateway creates               │                 Order Service
-  Passport access token         │                 reads X-User-Id
-        │                       │                 creates order
-        ▼                       ▼                        ▼
-  { token, user }        [ ...products ]          { id, total, status }
-        │
-  Store in localStorage
-  Use on every future request
+  AuthService             ProductClientInterface   auth:api (Passport)
+  (Application Layer)     → HttpProductClient      validates token
+  → UserClientInterface   (Infrastructure)                │
+    → HttpUserClient                                      ▼
+  → Passport token        Returns ProductData      IdentityProvider
+        │                 DTOs                     builds X-User-Id
+        ▼                       │                        ▼
+  { token, user }         ProductController        OrderClientInterface
+        │                 serializeCollection()    → HttpOrderClient
+  Store in localStorage           │                        │
+  Use on every request            ▼                        ▼
+                          [ ...ProductData ]       { OrderData, 201 }
 ```
 
 ---

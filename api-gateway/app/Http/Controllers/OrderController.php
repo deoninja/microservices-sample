@@ -2,28 +2,25 @@
 
 namespace App\Http\Controllers;
 
-use App\Auth\IdentityProvider;
-use App\Services\OrderService;
+use App\Gateway\Clients\IdentityProvider;
+use App\Gateway\Contracts\OrderClientInterface;
 use Illuminate\Http\Request;
 
 /*
- * app/Http/Controllers/OrderController.php — Order Proxy Controller
+ * app/Http/Controllers/OrderController.php — Order Endpoint (Presentation Layer)
  *
- * SOLID Principles applied:
- *   - Single Responsibility: ONLY handles order-related proxy requests.
- *   - Interface Segregation: Order-specific methods are isolated from
- *     unrelated user and product methods.
- *   - Dependency Inversion: Dependencies injected via constructor.
+ * Clean Architecture:
+ *   Presentation Layer — Thin entry point.
  */
 
 class OrderController extends Controller
 {
-    private OrderService $orderService;
+    private OrderClientInterface $orderClient;
     private IdentityProvider $identityProvider;
 
-    public function __construct(OrderService $orderService, IdentityProvider $identityProvider)
+    public function __construct(OrderClientInterface $orderClient, IdentityProvider $identityProvider)
     {
-        $this->orderService = $orderService;
+        $this->orderClient = $orderClient;
         $this->identityProvider = $identityProvider;
     }
 
@@ -33,9 +30,12 @@ class OrderController extends Controller
     public function index(Request $request)
     {
         $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->orderService->getAll($headers);
+        $result  = $this->orderClient->getAll($headers);
 
-        return response()->json($result['body'], $result['status']);
+        return response()->json(
+            $this->serializeCollection($result['body']),
+            $result['status']
+        );
     }
 
     /**
@@ -44,9 +44,12 @@ class OrderController extends Controller
     public function show(Request $request, int $id)
     {
         $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->orderService->getById($id, $headers);
+        $result  = $this->orderClient->getById($id, $headers);
 
-        return response()->json($result['body'], $result['status']);
+        return response()->json(
+            $this->serialize($result['body']),
+            $result['status']
+        );
     }
 
     /**
@@ -55,9 +58,12 @@ class OrderController extends Controller
     public function store(Request $request)
     {
         $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->orderService->create($request->all(), $headers);
+        $result  = $this->orderClient->create($request->all(), $headers);
 
-        return response()->json($result['body'], $result['status']);
+        return response()->json(
+            $this->serialize($result['body']),
+            $result['status']
+        );
     }
 
     /**
@@ -66,8 +72,10 @@ class OrderController extends Controller
     public function updateStatus(Request $request, int $id)
     {
         $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->orderService->updateStatus($id, $request->all(), $headers);
+        $result  = $this->orderClient->updateStatus($id, $request->all(), $headers);
 
         return response()->json($result['body'], $result['status']);
     }
+
 }
+

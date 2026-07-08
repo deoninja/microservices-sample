@@ -2,112 +2,64 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\User;
-use App\Services\UserService;
-use Illuminate\Http\Request;
+use App\Http\Requests\LoginRequest;
+use App\Http\Requests\RegisterRequest;
+use App\Services\AuthService;
 
 /*
- * app/Http/Controllers/AuthController.php — Login & Registration (Refactored)
+ * app/Http/Controllers/AuthController.php — Authentication Entry Point
  *
- * SOLID Principles applied:
- *   - Single Responsibility: This controller only handles auth-related requests.
- *     User synchronization is the controller's concern (acting as the coordinator).
- *   - Dependency Inversion: Depends on UserService (abstraction) injected via
- *     constructor, not on static ProxyHelper calls.
- *   - Open/Closed: Adding new auth features (e.g. logout) means adding methods
- *     here or creating new classes, not modifying existing tested code.
+ * Clean Architecture — Presentation Layer:
+ *   This controller is a THIN entry point. It only:
+ *   1. Receives the HTTP request
+ *   2. Validates input (via Form Request classes)
+ *   3. Delegates to the Application layer (AuthService)
+ *   4. Returns the response
+ *
+ * No business logic lives here. Authentication orchestration is in
+ * AuthService (Application layer). HTTP communication is in
+ * HttpUserClient (Infrastructure layer).
  */
 
 class AuthController extends Controller
 {
-    /**
-     * The user microservice client.
-     */
-    private UserService $userService;
+    private AuthService $authService;
 
-    /**
-     * Inject the UserService dependency (DIP).
-     *
-     * Laravel's service container automatically resolves this from the
-     * binding registered in AppServiceProvider.
-     */
-    public function __construct(UserService $userService)
+    public function __construct(AuthService $authService)
     {
-        $this->userService = $userService;
+        $this->authService = $authService;
     }
 
-    /**
-     * POST /api/auth/login — Authenticate and return a Passport token.
-     */
-    public function login(Request $request)
+    public function login(LoginRequest $request)
     {
-        $request->validate([
-            'username' => 'required|string',
-            'password' => 'required|string',
-        ]);
-
-        $result = $this->userService->login([
-            'username' => $request->input('username'),
-            'password' => $request->input('password'),
-        ]);
-
-        if (!$result['success']) {
-            return response()->json(['error' => 'Invalid credentials'], 401);
-        }
-
-        $userData = $result['body'];
-
-        $localUser = User::updateOrCreate(
-            ['id' => $userData['id']],
-            [
-                'username' => $userData['username'],
-                'name'     => $userData['name'],
-                'email'    => $userData['email'],
-                'role'     => $userData['role'] ?? 'user',
-            ]
+        $result = $this->authService->login(
+            $request->input('username'),
+            $request->input('password')
         );
 
-        $token = $localUser->createToken('api-access-token')->accessToken;
+        if (!$result['success']) {
+            return response()->json($result['body'], $result['status'] ?? 401);
+        }
 
         return response()->json([
-            'token' => $token,
-            'user'  => $userData,
+            'token' => $result['token'],
+            'user'  => $result['user']->toArray(),
         ]);
     }
 
-    /**
-     * POST /api/auth/register — Create a new user account.
-     */
-    public function register(Request $request)
+    public function register(RegisterRequest $request)
     {
-        $request->validate([
-            'username' => 'required|string|min:3',
-            'password' => 'required|string|min:6',
-            'name'     => 'required|string',
-            'email'    => 'required|email',
-        ]);
-
-        $result = $this->userService->register([
-            'username' => $request->input('username'),
-            'password' => $request->input('password'),
-            'name'     => $request->input('name'),
-            'email'    => $request->input('email'),
-        ]);
+        $result = $this->authService->register(
+            $request->input('username'),
+            $request->input('password'),
+            $request->input('name'),
+            $request->input('email')
+        );
 
         if (!$result['success']) {
             return response()->json($result['body'], $result['status']);
         }
 
-        $userData = $result['body'];
-
-        User::create([
-            'id'       => $userData['id'],
-            'username' => $userData['username'],
-            'name'     => $userData['name'],
-            'email'    => $userData['email'],
-            'role'     => $userData['role'] ?? 'user',
-        ]);
-
-        return response()->json($userData, 201);
+        return response()->json($result['body']->toArray(), 201);
     }
 }

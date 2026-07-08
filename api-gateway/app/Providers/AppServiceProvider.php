@@ -2,22 +2,28 @@
 
 namespace App\Providers;
 
-use App\Auth\IdentityProvider;
-use App\Contracts\ServiceClientInterface;
-use App\Services\OrderService;
-use App\Services\ProductService;
-use App\Services\UserService;
+use App\Gateway\Clients\IdentityProvider;
+use App\Gateway\Clients\HttpOrderClient;
+use App\Gateway\Clients\HttpProductClient;
+use App\Gateway\Clients\HttpUserClient;
+use App\Gateway\Contracts\OrderClientInterface;
+use App\Gateway\Contracts\ProductClientInterface;
+use App\Gateway\Contracts\UserClientInterface;
+use App\Services\AuthService;
 use Illuminate\Support\ServiceProvider;
 
 /*
  * app/Providers/AppServiceProvider.php — Service Container Bindings
  *
- * This provider registers all the bindings that Laravel's service container
- * needs to resolve injected dependencies automatically.
+ * Following Clean Architecture, this provider wires the Dependency Injection
+ * container so that Presentation-layer controllers receive the correct
+ * Infrastructure-layer adapters behind interface abstractions.
  *
- * By binding interfaces to concrete implementations here, we follow the
- * Dependency Inversion Principle — controllers depend on abstractions,
- * and this provider decides which concrete implementation to use.
+ * Layer mapping:
+ *   Interfaces (Ports)     →  app/Gateway/Contracts/
+ *   Implementations (Adapters)  →  app/Gateway/Clients/
+ *   Application Services   →  app/Services/
+ *   Presentation           →  app/Http/Controllers/
  */
 
 class AppServiceProvider extends ServiceProvider
@@ -27,24 +33,32 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        // Bind microservice clients to the container as singletons.
-        // This means the same instance is reused across all requests.
-        $this->app->singleton(UserService::class, function ($app) {
-            return new UserService();
+        // ── Infrastructure Layer — Port-to-Adapter bindings ─────────────────
+        // Each *ClientInterface (port) is bound to its Http*Client (adapter).
+        // Singletons ensure the same Guzzle/client instance is reused.
+
+        $this->app->singleton(UserClientInterface::class, function () {
+            return new HttpUserClient();
         });
 
-        $this->app->singleton(ProductService::class, function ($app) {
-            return new ProductService();
+        $this->app->singleton(ProductClientInterface::class, function () {
+            return new HttpProductClient();
         });
 
-        $this->app->singleton(OrderService::class, function ($app) {
-            return new OrderService();
+        $this->app->singleton(OrderClientInterface::class, function () {
+            return new HttpOrderClient();
         });
 
-        // Bind the IdentityProvider as a singleton.
+        // ── Infrastructure — Identity Provider ─────────────────────────────
         $this->app->singleton(IdentityProvider::class);
 
-        // Override the exception handler so ALL errors return JSON.
+        // ── Application Layer — Orchestration Services ─────────────────────
+        // AuthService depends on UserClientInterface, which is resolved
+        // automatically by the container through the binding above.
+        $this->app->singleton(AuthService::class);
+
+        // ── Error Handling ─────────────────────────────────────────────────
+        // Ensure ALL errors return JSON (never HTML), even for auth failures.
         $this->app->bind(
             \Illuminate\Contracts\Debug\ExceptionHandler::class,
             \App\Exceptions\Handler::class
