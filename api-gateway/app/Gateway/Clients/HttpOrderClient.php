@@ -3,13 +3,13 @@
 namespace App\Gateway\Clients;
 
 use App\Gateway\Contracts\OrderClientInterface;
-use App\Gateway\DTOs\OrderData;
 use Illuminate\Support\Facades\Http;
 
 /*
  * app/Gateway/Clients/HttpOrderClient.php — Order Service Http Adapter
  *
- * Concrete implementation of OrderClientInterface using Laravel's Http facade.
+ * Forwards raw microservice responses. Use ResponseFormatter in Actions
+ * to filter fields before forwarding to frontend.
  */
 
 class HttpOrderClient implements OrderClientInterface
@@ -27,7 +27,7 @@ class HttpOrderClient implements OrderClientInterface
             ->timeout(10)
             ->get("{$this->baseUrl}/api/orders");
 
-        return $this->parseResponse($response, true);
+        return $this->parseResponse($response);
     }
 
     public function getById(int $id, array $headers = []): array
@@ -57,23 +57,15 @@ class HttpOrderClient implements OrderClientInterface
         return $this->parseResponse($response);
     }
 
-    private function parseResponse($response, bool $isCollection = false): array
+    /**
+     * Return the raw decoded JSON body — no DTO mapping.
+     */
+    private function parseResponse($response): array
     {
-        $body = $response->json() ?? [];
-        $success = $response->successful();
-
-        if ($success) {
-            if ($isCollection) {
-                $body = array_map(fn ($item) => OrderData::fromArray($item), $body);
-            } elseif (isset($body['id'])) {
-                $body = OrderData::fromArray($body);
-            }
-        }
-
         return [
             'status'  => $response->status(),
-            'body'    => $body,
-            'success' => $success,
+            'body'    => $response->json() ?? [],
+            'success' => $response->successful(),
         ];
     }
 }

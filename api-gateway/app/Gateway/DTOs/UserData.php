@@ -13,7 +13,7 @@ namespace App\Gateway\DTOs;
  * use the named constructor `fromArray()` or `with()` pattern.
  */
 
-class UserData
+class UserData implements \JsonSerializable
 {
     public readonly int $id;
     public readonly string $username;
@@ -56,5 +56,10 @@ class UserData
             'email'    => $this->email,
             'role'     => $this->role,
         ];
+    }
+
+    public function jsonSerialize(): array
+    {
+        return $this->toArray();
     }
 }

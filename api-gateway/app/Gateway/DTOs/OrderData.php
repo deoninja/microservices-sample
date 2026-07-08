@@ -8,7 +8,7 @@ namespace App\Gateway\DTOs;
  * Typed representation of order data from the Order Service.
  */
 
-class OrderData
+class OrderData implements \JsonSerializable
 {
     public readonly int $id;
     public readonly int $userId;
@@ -60,5 +60,10 @@ class OrderData
             'status'       => $this->status,
             'createdAt'    => $this->createdAt,
         ];
+    }
+
+    public function jsonSerialize(): array
+    {
+        return $this->toArray();
     }
 }

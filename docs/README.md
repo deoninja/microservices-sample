@@ -55,35 +55,23 @@ Laravel API Gateway (:8000)
 
 ## Recent changes
 
-### Clean Architecture Refactoring
+### Action Pattern (Ultra-Thin Controllers)
 
-The API Gateway was refactored from SOLID services to a full Clean Architecture structure:
+Controllers are now **ultra-thin** — each method injects the action as a method parameter and just calls `return $action(...)`.
 
-| Layer | Directory | Purpose |
-|-------|-----------|---------|
-| **Presentation** | `app/Http/Controllers/` | Thin entry points — validate, delegate, return |
-| **Presentation** | `app/Http/Requests/` | Input validation via Form Request classes |
-| **Application** | `app/Services/` | Orchestration — AuthService coordinates login/register |
-| **Infrastructure** | `app/Gateway/Contracts/` | Ports — interfaces defining service contracts |
-| **Infrastructure** | `app/Gateway/Clients/` | Adapters — concrete HTTP implementations using Laravel Http facade |
-| **Infrastructure** | `app/Gateway/Clients/IdentityProvider.php` | Builds X-User-Id / X-User-Role headers |
-| **Infrastructure** | `app/Gateway/DTOs/` | Typed data transfer objects (UserData, ProductData, OrderData) |
+| Directory | Files | Purpose |
+|-----------|-------|---------|
+| `app/Actions/Auth/` | `LoginAction`, `RegisterAction` | Authentication actions (delegate to `AuthService`) |
+| `app/Actions/User/` | `Fetch`, `Show`, `Create`, `Update`, `Delete` | User CRUD actions (call `UserClientInterface`) |
+| `app/Actions/Product/` | `Fetch`, `Show`, `Create`, `Update`, `Delete` | Product CRUD actions (call `ProductClientInterface`) |
+| `app/Actions/Order/` | `Fetch`, `Show`, `Create`, `UpdateStatus` | Order actions (call `OrderClientInterface`) |
 
-**New files:**
-- `app/Gateway/Contracts/UserClientInterface.php`, `ProductClientInterface.php`, `OrderClientInterface.php`
-- `app/Gateway/Clients/HttpUserClient.php`, `HttpProductClient.php`, `HttpOrderClient.php`
-- `app/Gateway/Clients/IdentityProvider.php` — moved from `app/Auth/`
-- `app/Gateway/DTOs/UserData.php`, `ProductData.php`, `OrderData.php`
-- `app/Services/AuthService.php` — orchestration layer
-- `app/Http/Requests/LoginRequest.php`, `RegisterRequest.php` — Form Request validation
-
-**Removed:**
-- `app/Contracts/ServiceClientInterface.php` — replaced by per-service interfaces in `Gateway/Contracts/`
-- `app/Services/BaseService.php` — replaced by `Gateway/Clients/Http*Client` classes
-- `app/Services/UserService.php`, `ProductService.php`, `OrderService.php` — replaced by `Gateway/Clients/`
-- `app/Auth/IdentityProvider.php` — moved to `Gateway/Clients/`
-- `app/Helpers/ProxyHelper.php` — replaced by `Http*Client` classes
-- `app/Http/Controllers/GatewayController.php` — split into separate controllers per service
+**Key changes:**
+- Created 16 invokable Action classes under `app/Actions/{Domain}/`
+- Each action is a single-responsibility invokable class with constructor-injected dependencies
+- Controllers no longer have constructor dependencies — actions are injected as method parameters
+- DTOs implement `JsonSerializable` — no manual `serialize()` helpers needed
+- Removed `serialize()`/`serializeCollection()` from base `Controller.php`
 
 ### Fixed: Error handling for microservice connection failures
 Added `ConnectionException` handling to `app/Exceptions/Handler.php` — returns `502 Bad Gateway` when a microservice is unreachable.

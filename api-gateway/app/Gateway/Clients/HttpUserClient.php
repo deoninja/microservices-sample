@@ -3,16 +3,14 @@
 namespace App\Gateway\Clients;
 
 use App\Gateway\Contracts\UserClientInterface;
-use App\Gateway\DTOs\UserData;
 use Illuminate\Support\Facades\Http;
 
 /*
  * app/Gateway/Clients/HttpUserClient.php — User Service Http Adapter
  *
- * Concrete implementation of UserClientInterface using Laravel's
- * Http facade. This is an Adapter in Clean Architecture terms —
- * it translates the application's internal calls into HTTP requests
- * to the User microservice.
+ * Forwards raw microservice responses. No DTO mapping — the response
+ * is passed through as-is. Use ResponseFormatter in the Action layer
+ * when filtering/transformation is needed.
  */
 
 class HttpUserClient implements UserClientInterface
@@ -33,12 +31,11 @@ class HttpUserClient implements UserClientInterface
             ]);
 
         $body = $response->json() ?? [];
-        $success = $response->successful();
 
         return [
             'status'  => $response->status(),
-            'body'    => $success ? UserData::fromArray($body) : $body,
-            'success' => $success,
+            'body'    => $body,
+            'success' => $response->successful(),
         ];
     }
 
@@ -53,12 +50,11 @@ class HttpUserClient implements UserClientInterface
             ]);
 
         $body = $response->json() ?? [];
-        $success = $response->successful();
 
         return [
             'status'  => $response->status(),
-            'body'    => $success ? UserData::fromArray($body) : $body,
-            'success' => $success,
+            'body'    => $body,
+            'success' => $response->successful(),
         ];
     }
 
@@ -68,7 +64,7 @@ class HttpUserClient implements UserClientInterface
             ->timeout(10)
             ->get("{$this->baseUrl}/api/users");
 
-        return $this->parseResponse($response, true);
+        return $this->parseResponse($response);
     }
 
     public function getById(int $id, array $headers = []): array
@@ -107,23 +103,15 @@ class HttpUserClient implements UserClientInterface
         return $this->parseResponse($response);
     }
 
-    private function parseResponse($response, bool $isCollection = false): array
+    /**
+     * Return the raw decoded JSON body — no DTO mapping.
+     */
+    private function parseResponse($response): array
     {
-        $body = $response->json() ?? [];
-        $success = $response->successful();
-
-        if ($success) {
-            if ($isCollection) {
-                $body = array_map(fn ($item) => UserData::fromArray($item), $body);
-            } elseif (isset($body['id'])) {
-                $body = UserData::fromArray($body);
-            }
-        }
-
         return [
             'status'  => $response->status(),
-            'body'    => $body,
-            'success' => $success,
+            'body'    => $response->json() ?? [],
+            'success' => $response->successful(),
         ];
     }
 }

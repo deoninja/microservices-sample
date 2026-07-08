@@ -61,6 +61,7 @@ Route::prefix('products')->group(function () {
 
 // ── Order Routes — ALL protected by Passport ─────────────────────────────────
 Route::prefix('orders')->middleware('auth:api')->group(function () {
+    Route::get('/aggregated',        [OrderController::class, 'aggregated']);   // list + enrich with products (BEFORE /{id})
     Route::get('/',                  [OrderController::class, 'index']);        // list orders
     Route::get('/{id}',              [OrderController::class, 'show']);         // get one order
     Route::post('/',                 [OrderController::class, 'store']);        // place new order

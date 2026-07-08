@@ -3,13 +3,13 @@
 namespace App\Gateway\Clients;
 
 use App\Gateway\Contracts\ProductClientInterface;
-use App\Gateway\DTOs\ProductData;
 use Illuminate\Support\Facades\Http;
 
 /*
  * app/Gateway/Clients/HttpProductClient.php — Product Service Http Adapter
  *
- * Concrete implementation of ProductClientInterface using Laravel's Http facade.
+ * Forwards raw microservice responses. Use ResponseFormatter in Actions
+ * to filter fields (e.g. strip createdAt) before forwarding to frontend.
  */
 
 class HttpProductClient implements ProductClientInterface
@@ -33,7 +33,7 @@ class HttpProductClient implements ProductClientInterface
             ->timeout(10)
             ->get($path);
 
-        return $this->parseResponse($response, true);
+        return $this->parseResponse($response);
     }
 
     public function getById(int $id, array $headers = []): array
@@ -72,23 +72,15 @@ class HttpProductClient implements ProductClientInterface
         return $this->parseResponse($response);
     }
 
-    private function parseResponse($response, bool $isCollection = false): array
+    /**
+     * Return the raw decoded JSON body — no DTO mapping.
+     */
+    private function parseResponse($response): array
     {
-        $body = $response->json() ?? [];
-        $success = $response->successful();
-
-        if ($success) {
-            if ($isCollection) {
-                $body = array_map(fn ($item) => ProductData::fromArray($item), $body);
-            } elseif (isset($body['id'])) {
-                $body = ProductData::fromArray($body);
-            }
-        }
-
         return [
             'status'  => $response->status(),
-            'body'    => $body,
-            'success' => $success,
+            'body'    => $response->json() ?? [],
+            'success' => $response->successful(),
         ];
     }
 }

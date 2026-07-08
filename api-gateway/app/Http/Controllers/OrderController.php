@@ -2,80 +2,40 @@
 
 namespace App\Http\Controllers;
 
-use App\Gateway\Clients\IdentityProvider;
-use App\Gateway\Contracts\OrderClientInterface;
+use App\Actions\Order\OrderAggregatedFetchAction;
+use App\Actions\Order\OrderCreateAction;
+use App\Actions\Order\OrderFetchAction;
+use App\Actions\Order\OrderShowAction;
+use App\Actions\Order\OrderUpdateStatusAction;
 use Illuminate\Http\Request;
-
-/*
- * app/Http/Controllers/OrderController.php — Order Endpoint (Presentation Layer)
- *
- * Clean Architecture:
- *   Presentation Layer — Thin entry point.
- */
 
 class OrderController extends Controller
 {
-    private OrderClientInterface $orderClient;
-    private IdentityProvider $identityProvider;
-
-    public function __construct(OrderClientInterface $orderClient, IdentityProvider $identityProvider)
+    public function index(Request $request, OrderFetchAction $action)
     {
-        $this->orderClient = $orderClient;
-        $this->identityProvider = $identityProvider;
+        return $action($request);
+    }
+
+    public function show(Request $request, OrderShowAction $action, int $id)
+    {
+        return $action($request, $id);
+    }
+
+    public function store(Request $request, OrderCreateAction $action)
+    {
+        return $action($request);
+    }
+
+    public function updateStatus(Request $request, OrderUpdateStatusAction $action, int $id)
+    {
+        return $action($request, $id);
     }
 
     /**
-     * GET /api/orders — List all orders.
+     * GET /api/orders/aggregated — Orders enriched with product details.
      */
-    public function index(Request $request)
+    public function aggregated(Request $request, OrderAggregatedFetchAction $action)
     {
-        $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->orderClient->getAll($headers);
-
-        return response()->json(
-            $this->serializeCollection($result['body']),
-            $result['status']
-        );
+        return $action($request);
     }
-
-    /**
-     * GET /api/orders/{id} — Get a single order.
-     */
-    public function show(Request $request, int $id)
-    {
-        $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->orderClient->getById($id, $headers);
-
-        return response()->json(
-            $this->serialize($result['body']),
-            $result['status']
-        );
-    }
-
-    /**
-     * POST /api/orders — Place a new order.
-     */
-    public function store(Request $request)
-    {
-        $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->orderClient->create($request->all(), $headers);
-
-        return response()->json(
-            $this->serialize($result['body']),
-            $result['status']
-        );
-    }
-
-    /**
-     * PUT /api/orders/{id}/status — Update an order's status.
-     */
-    public function updateStatus(Request $request, int $id)
-    {
-        $headers = $this->identityProvider->getHeaders($request);
-        $result  = $this->orderClient->updateStatus($id, $request->all(), $headers);
-
-        return response()->json($result['body'], $result['status']);
-    }
-
 }
-

@@ -3,20 +3,14 @@
 namespace App\Services;
 
 use App\Gateway\Contracts\UserClientInterface;
-use App\Gateway\DTOs\UserData;
 use App\Models\User;
 
 /*
  * app/Services/AuthService.php — Authentication Orchestration
  *
- * This service sits in the Application/Orchestration layer.
- * It coordinates the login/register flow across multiple actors:
- *   1. UserClientInterface (Infrastructure) — communicates with User Service
- *   2. User model (infrastructure) — creates/updates local Passport records
- *   3. Passport — issues personal access tokens
- *
- * The controllers depend on this service, keeping them thin.
- * This service depends on abstractions (interfaces), not concretions.
+ * Coordinates login/register across UserClient + Passport.
+ * Receives raw arrays from the client (no DTO mapping) and
+ * works directly with array access for local User records.
  */
 
 class AuthService
@@ -29,9 +23,7 @@ class AuthService
     }
 
     /**
-     * Authenticate a user and issue a Passport token.
-     *
-     * @return array{success: bool, token?: string, user?: UserData, status?: int, body?: array}
+     * @return array{success: bool, token?: string, user?: array, status?: int, body?: array}
      */
     public function login(string $username, string $password): array
     {
@@ -45,13 +37,12 @@ class AuthService
             ];
         }
 
-        /** @var UserData $userData */
-        $userData = $result['body'];
+        $userData = $result['body'];  // raw array from microservice
 
         // Synchronize local user record for Passport
         $localUser = User::updateOrCreate(
-            ['id' => $userData->id],
-            $userData->toArray()
+            ['id' => $userData['id']],
+            $userData
         );
 
         // Issue a Passport personal access token
@@ -65,9 +56,7 @@ class AuthService
     }
 
     /**
-     * Register a new user.
-     *
-     * @return array{success: bool, status: int, body: UserData|array}
+     * @return array{success: bool, status: int, body: array}
      */
     public function register(string $username, string $password, string $name, string $email): array
     {
@@ -81,11 +70,10 @@ class AuthService
             ];
         }
 
-        /** @var UserData $userData */
-        $userData = $result['body'];
+        $userData = $result['body'];  // raw array from microservice
 
         // Create local user record for Passport
-        User::create($userData->toArray());
+        User::create($userData);
 
         return [
             'success' => true,

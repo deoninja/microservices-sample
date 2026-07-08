@@ -56,6 +56,7 @@ class AppServiceProvider extends ServiceProvider
         // AuthService depends on UserClientInterface, which is resolved
         // automatically by the container through the binding above.
         $this->app->singleton(AuthService::class);
+        $this->app->singleton(OrderAggregationService::class);
 
         // ── Error Handling ─────────────────────────────────────────────────
         // Ensure ALL errors return JSON (never HTML), even for auth failures.

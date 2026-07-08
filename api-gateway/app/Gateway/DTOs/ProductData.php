@@ -9,7 +9,7 @@ namespace App\Gateway\DTOs;
  * Used at the boundary between the Infrastructure and Presentation layers.
  */
 
-class ProductData
+class ProductData implements \JsonSerializable
 {
     public readonly int $id;
     public readonly string $name;
@@ -50,5 +50,10 @@ class ProductData
             'stock'       => $this->stock,
             'createdAt'  => $this->createdAt,
         ];
+    }
+
+    public function jsonSerialize(): array
+    {
+        return $this->toArray();
     }
 }

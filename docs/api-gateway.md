@@ -31,42 +31,64 @@ API Gateway :8000          ← you only talk to this
 
 ```
 api-gateway/
-├── app/
-│   ├── Exceptions/
-│   │   └── Handler.php                        # converts exceptions to JSON responses
-│   ├── Gateway/                                # INFRASTRUCTURE LAYER (Adapters)
-│   │   ├── Contracts/                          # Ports (Interfaces)
-│   │   │   ├── UserClientInterface.php
-│   │   │   ├── ProductClientInterface.php
-│   │   │   └── OrderClientInterface.php
-│   │   ├── Clients/                            # Concrete Adapters (Laravel Http facade)
-│   │   │   ├── HttpUserClient.php
-│   │   │   ├── HttpProductClient.php
-│   │   │   ├── HttpOrderClient.php
-│   │   │   └── IdentityProvider.php            # builds X-User-Id / X-User-Role headers
-│   │   └── DTOs/                               # Data Transfer Objects
-│   │       ├── UserData.php
-│   │       ├── ProductData.php
-│   │       └── OrderData.php
-│   ├── Http/                                   # PRESENTATION LAYER
-│   │   ├── Controllers/
-│   │   │   ├── Controller.php                  # base controller + serialize helpers
-│   │   │   ├── AuthController.php              # handles login & register
-│   │   │   ├── UserController.php              # user CRUD proxy
-│   │   │   ├── ProductController.php           # product CRUD proxy
-│   │   │   └── OrderController.php             # order CRUD proxy
-│   │   ├── Kernel.php                          # registers middleware aliases
-│   │   └── Requests/                           # Input Validation (Form Requests)
-│   │       ├── LoginRequest.php
-│   │       └── RegisterRequest.php
-│   ├── Models/
-│   │   └── User.php                            # Passport-authenticatable user model
-│   ├── Providers/
-│   │   ├── AppServiceProvider.php              # registers DI bindings
-│   │   ├── AuthServiceProvider.php
-│   │   └── RouteServiceProvider.php            # loads routes/api.php
-│   └── Services/                               # APPLICATION / ORCHESTRATION LAYER
-│       └── AuthService.php                     # orchestrates login/register flow
+├── Actions/                                 # SINGLE-RESPONSIBILITY ACTIONS
+│   ├── Auth/
+│   │   ├── LoginAction.php                    # authenticates user → returns token
+│   │   └── RegisterAction.php                 # registers user → returns user data
+│   ├── User/
+│   │   ├── UserFetchAction.php                # GET /api/users
+│   │   ├── UserShowAction.php                 # GET /api/users/{id}
+│   │   ├── UserCreateAction.php               # POST /api/users
+│   │   ├── UserUpdateAction.php               # PUT /api/users/{id}
+│   │   └── UserDeleteAction.php               # DELETE /api/users/{id}
+│   ├── Product/
+│   │   ├── ProductFetchAction.php             # GET /api/products
+│   │   ├── ProductShowAction.php              # GET /api/products/{id}
+│   │   ├── ProductCreateAction.php            # POST /api/products
+│   │   ├── ProductUpdateAction.php            # PUT /api/products/{id}
+│   │   └── ProductDeleteAction.php            # DELETE /api/products/{id}
+│   └── Order/
+│       ├── OrderFetchAction.php               # GET /api/orders
+│       ├── OrderShowAction.php                # GET /api/orders/{id}
+│       ├── OrderCreateAction.php              # POST /api/orders
+│       └── OrderUpdateStatusAction.php        # PUT /api/orders/{id}/status
+├── Exceptions/
+│   └── Handler.php                            # converts exceptions to JSON responses
+├── Gateway/                                   # INFRASTRUCTURE LAYER (Adapters)
+│   ├── Contracts/                             # Ports (Interfaces)
+│   │   ├── UserClientInterface.php
+│   │   ├── ProductClientInterface.php
+│   │   └── OrderClientInterface.php
+│   ├── Clients/                               # Concrete Adapters (Laravel Http facade)
+│   │   ├── HttpUserClient.php
+│   │   ├── HttpProductClient.php
+│   │   ├── HttpOrderClient.php
+│   │   └── IdentityProvider.php               # builds X-User-Id / X-User-Role headers
+│   ├── Support/                               # Utilities
+│   │   └── ResponseFormatter.php              # raw/except/only/map field filtering
+│   └── DTOs/                                  # Optional typed schemas (JsonSerializable)
+│       ├── UserData.php
+│       ├── ProductData.php
+│       └── OrderData.php
+├── Http/                                      # PRESENTATION LAYER
+│   ├── Controllers/
+│   │   ├── Controller.php                     # base controller (no business logic)
+│   │   ├── AuthController.php                 # delegates to LoginAction & RegisterAction
+│   │   ├── UserController.php                 # delegates to User*Actions
+│   │   ├── ProductController.php              # delegates to Product*Actions
+│   │   └── OrderController.php                # delegates to Order*Actions
+│   ├── Kernel.php                             # registers middleware aliases
+│   └── Requests/                              # Input Validation (Form Requests)
+│       ├── LoginRequest.php
+│       └── RegisterRequest.php
+├── Models/
+│   └── User.php                               # Passport-authenticatable user model
+├── Providers/
+│   ├── AppServiceProvider.php                 # registers DI bindings
+│   ├── AuthServiceProvider.php
+│   └── RouteServiceProvider.php               # loads routes/api.php
+└── Services/                                  # APPLICATION / ORCHESTRATION LAYER
+    └── AuthService.php                        # orchestrates login/register flow
 ├── bootstrap/
 │   └── app.php                                 # boots the Laravel app
 ├── config/
@@ -85,22 +107,24 @@ docker-compose.yml                               # Docker env vars including APP
 ### Layer Architecture
 
 ```
-┌────────────────────────────────────────────────────┐
-│               PRESENTATION LAYER                    │
-│  Controllers (thin entry points)                    │
-│  Form Requests (input validation)                   │
-│  ───── depends on Application & Infrastructure ──── │
-├────────────────────────────────────────────────────┤
-│               APPLICATION LAYER                      │
-│  AuthService (orchestrates login/register flow)      │
-│  ───── depends on Infrastructure (Ports/interfaces)  │
-├────────────────────────────────────────────────────┤
-│              INFRASTRUCTURE LAYER                     │
-│  Contracts (Ports — interfaces)                     │
-│  Http*Clients (Adapters — Laravel Http facade)      │
-│  DTOs (Data Transfer Objects)                        │
-│  IdentityProvider (header builder)                   │
-└────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│               PRESENTATION LAYER                      │
+│  Controllers (ultra-thin, just return $action())      │
+│  Actions (single-responsibility invokable classes)     │
+│  Form Requests (input validation)                     │
+│  ───── depends on Application & Infrastructure ────── │
+├──────────────────────────────────────────────────────┤
+│               APPLICATION LAYER                        │
+│  AuthService (orchestrates login/register flow)        │
+│  ───── depends on Infrastructure (Ports/interfaces)    │
+├──────────────────────────────────────────────────────┤
+│              INFRASTRUCTURE LAYER                       │
+│  Contracts (Ports — interfaces)                       │
+│  Http*Clients (Adapters — raw JSON passthrough)       │
+│  ResponseFormatter (optional field filtering)          │
+│  DTOs (optional typed schemas)                         │
+│  IdentityProvider (header builder)                     │
+└──────────────────────────────────────────────────────┘
         │
         ▼
   External microservices (User, Product, Order)
@@ -111,9 +135,10 @@ docker-compose.yml                               # Docker env vars including APP
 | Rule | How it's applied |
 |------|-----------------|
 | **Dependencies point inward** | Presentation → Application → Infrastructure. Controllers never talk directly to HTTP. |
-| **Controllers are thin** | They validate input (via FormRequests), delegate to services/clients, and return responses. |
-| **Interfaces (Ports) are owned by Infrastructure** | Contracts live in `Gateway/Contracts/` — the inner layers depend on abstractions, not concrete HTTP implementations. |
-| **DTOs cross boundaries** | Data flows as typed `UserData`, `ProductData`, `OrderData` between layers instead of loose arrays. |
+| **Controllers are ultra-thin** | Each method injects an **Action** as a parameter and calls `return $action(...)`. Zero logic. |
+| **Actions do one thing** | Each action is an invokable class (`__invoke`) with a single responsibility — call a client, format a response. |
+| **Raw response forwarding** | Http*Clients return raw decoded JSON arrays. No DTO mapping on every request. DTOs remain available for optional typed use. |
+| **Per-action formatting** | Actions use `ResponseFormatter::except()/only()/map()` to strip, filter, or transform fields per-endpoint. `GET /api/products` strips `createdAt`; `GET /api/orders` renames fields and computes derived values. |
 | **Application layer orchestrates** | `AuthService` coordinates the multi-step login/register flow across clients and models. |
 
 ---
@@ -366,41 +391,45 @@ class UserData
 
 ---
 
-## Step 7 — Infrastructure Layer: Contracts (`app/Gateway/Contracts/`)
+## Step 7 — Infrastructure Layer: Raw Response Forwarding
 
-These are the **Ports** in Clean Architecture terminology — interfaces that define how the Application and Presentation layers communicate with the outside world.
+Clients return the **raw decoded JSON** from microservices — no DTO mapping on every request. This is a proxy gateway, so pass-through is the default.
+
+```
+Microservice JSON → decode → raw array → [optional formatting in Action] → JSON → Frontend
+```
+
+If you need typed validation for specific data, DTOs (`UserData`, `ProductData`, `OrderData`) are still available via `UserData::fromArray($body)` — but they're no longer forced on every request.
+
+---
+
+## Step 8 — Infrastructure Layer: Contracts (`app/Gateway/Contracts/`)
+
+Ports/interfaces that define the service contracts. All return `{status, body, success}` with `body` as a raw array.
 
 ```php
 interface UserClientInterface
 {
+    /** @return array{status: int, body: array, success: bool} */
     public function login(string $username, string $password): array;
-    public function register(string $username, string $password, string $name, string $email): array;
+    public function register(...): array;
     public function getAll(array $headers = []): array;
     public function getById(int $id, array $headers = []): array;
-    public function create(array $data, array $headers = []): array;
-    public function update(int $id, array $data, array $headers = []): array;
+    public function create(...): array;
+    public function update(...): array;
     public function remove(int $id, array $headers = []): array;
 }
 ```
 
-Each interface returns a consistent `{status, body, success}` array where `body` contains a DTO (or collection of DTOs) on success, or a raw error array on failure.
-
 ---
 
-## Step 8 — Infrastructure Layer: Adapters (`app/Gateway/Clients/`)
+## Step 9 — Infrastructure Layer: Adapters (`app/Gateway/Clients/`)
 
-These are the **Concrete Adapters** — implementations of the Port interfaces using Laravel's `Http` facade.
+Concrete implementations using Laravel's `Http` facade. Simplified to raw passthrough:
 
 ```php
 class HttpUserClient implements UserClientInterface
 {
-    private string $baseUrl;
-
-    public function __construct()
-    {
-        $this->baseUrl = config('services.user_service.url', 'http://localhost:3001');
-    }
-
     public function login(string $username, string $password): array
     {
         $response = Http::timeout(10)
@@ -409,16 +438,12 @@ class HttpUserClient implements UserClientInterface
                 'password' => $password,
             ]);
 
-        $body = $response->json() ?? [];
-        $success = $response->successful();
-
         return [
             'status'  => $response->status(),
-            'body'    => $success ? UserData::fromArray($body) : $body,
-            'success' => $success,
+            'body'    => $response->json() ?? [],
+            'success' => $response->successful(),
         ];
     }
-    // ...
 }
 ```
 
@@ -430,52 +455,91 @@ class HttpUserClient implements UserClientInterface
 
 ### What happens when a microservice is down?
 
-The `Http` facade throws an `Illuminate\Http\Client\ConnectionException`. The **Exception Handler** catches it and returns `502 Bad Gateway`:
-
-```json
-{
-  "error": "Microservice unavailable",
-  "message": "A downstream service could not be reached."
-}
-```
+The `Http` facade throws a `ConnectionException`. The **Exception Handler** catches it and returns `502 Bad Gateway`.
 
 ### Identity Provider (`app/Gateway/Clients/IdentityProvider.php`)
 
-Reads the authenticated user from the request and builds identity headers to forward to downstream services:
+Builds `X-User-Id` / `X-User-Role` headers from the authenticated user to forward to downstream services.
+
+---
+
+## Step 10 — Infrastructure Layer: ResponseFormatter (`app/Gateway/Support/ResponseFormatter.php`)
+
+A lightweight utility for optional field filtering at the Action layer. Since clients now forward raw responses, Actions use `ResponseFormatter` when they need to strip or transform fields before sending to the frontend.
 
 ```php
-class IdentityProvider
+ResponseFormatter::raw($body);                                   // passthrough
+ResponseFormatter::except($body, ['createdAt', 'internal_note']); // remove fields
+ResponseFormatter::only($body, ['id', 'name', 'price']);         // keep only these
+ResponseFormatter::map($body, fn($item) => [                     // custom transform
+    'id'    => $item['id'],
+    'label' => strtoupper($item['name']),
+]);
+```
+
+All methods transparently handle both **single items** (associative array) and **collections** (indexed array of items).
+
+### Example: Strip `createdAt` from product listings
+
+```php
+class ProductFetchAction
 {
-    public function getHeaders(Request $request): array
+    public function __invoke(Request $request): JsonResponse
     {
-        $headers = [];
-        $user = $request->user() ?? Auth::user();
-        if ($user) {
-            $headers['X-User-Id']   = (string) $user->id;
-            $headers['X-User-Role'] = $user->role ?? 'user';
+        $result = $this->productClient->getAll(...);
+
+        if (!$result['success']) {
+            return response()->json($result['body'], $result['status']);
         }
-        return $headers;
+
+        $body = ResponseFormatter::except($result['body'], ['createdAt']);
+
+        return response()->json($body, $result['status']);
     }
 }
 ```
 
+### Example: Transform order list with `map()`
+
+```php
+class OrderFetchAction
+{
+    public function __invoke(Request $request): JsonResponse
+    {
+        $result = $this->orderClient->getAll(...);
+
+        if (!$result['success']) {
+            return response()->json($result['body'], $result['status']);
+        }
+
+        $body = ResponseFormatter::map($result['body'], function (array $order): array {
+            return [
+                'id'        => $order['id'],
+                'customer'  => $order['customerName'],   // rename field
+                'status'    => $order['status'],
+                'items'     => $order['items'],
+                'itemCount' => count($order['items']),   // derived value
+                'total'     => $order['total'],
+                // userId and createdAt are intentionally excluded
+            ];
+        });
+
+        return response()->json($body, $result['status']);
+    }
+}
+```
+
+Notice `GET /api/orders` transforms `customerName` → `customer`, adds `itemCount`, and omits `userId`/`createdAt`. Meanwhile `GET /api/orders/{id}` returns the raw data unchanged — demonstrating **per-action formatting control**.
+
 ---
 
-## Step 9 — Application Layer: AuthService (`app/Services/AuthService.php`)
+## Step 11 — Application Layer: AuthService (`app/Services/AuthService.php`)
 
-This service sits in the Application/Orchestration layer. It coordinates the login/register flow across multiple actors:
-
-1. **UserClientInterface** (Infrastructure) — communicates with User Service
-2. **User model** (Infrastructure) — creates/updates local Passport records
-3. **Passport** — issues personal access tokens
+Coordinates login/register across UserClient + Passport. Works with raw arrays from the client:
 
 ```php
 class AuthService
 {
-    private UserClientInterface $userClient;
-
-    public function __construct(UserClientInterface $userClient) { ... }
-
     public function login(string $username, string $password): array
     {
         $result = $this->userClient->login($username, $password);
@@ -483,109 +547,166 @@ class AuthService
             return ['success' => false, 'status' => 401, 'body' => ['error' => 'Invalid credentials']];
         }
 
-        $userData = $result['body'];  // UserData DTO
+        $userData = $result['body'];  // raw array from microservice
 
-        // Synchronize local user for Passport
         $localUser = User::updateOrCreate(
-            ['id' => $userData->id],
-            $userData->toArray()
+            ['id' => $userData['id']],   // array access, not object
+            $userData                    // already an array
         );
 
-        // Issue Passport personal access token
         $token = $localUser->createToken('api-access-token')->accessToken;
 
         return ['success' => true, 'token' => $token, 'user' => $userData];
     }
-
-    public function register(...): array { ... }
 }
 ```
 
 ---
 
-## Step 10 — Presentation Layer: Controllers
+## Step 10 — Actions (`app/Actions/`)
 
-Controllers are **thin entry points**. They follow this pattern:
+Actions are **single-responsibility invokable classes** that sit between the controller and the Infrastructure/Application layers. Each action does exactly one thing — call a client, format a response.
 
-1. Receive the HTTP request
-2. Validate input (via FormRequest classes for auth)
-3. Delegate to Application/Infrastructure layers
-4. Return the response (serializing DTOs via inherited `serialize()` / `serializeCollection()` helpers)
+This pattern makes controllers **ultra-thin**: each controller method just injects the action and calls `return $action(...)`.
 
-### Form Request Validation (`app/Http/Requests/`)
-
-Login and Register requests use Laravel Form Request classes for validation:
+### Pattern
 
 ```php
-class LoginRequest extends FormRequest
-{
-    public function authorize(): bool { return true; }
+namespace App\Actions\User;
 
-    public function rules(): array
+class UserFetchAction
+{
+    public function __construct(
+        protected UserClientInterface $userClient,
+        protected IdentityProvider $identityProvider,
+    ) {}
+
+    public function __invoke(Request $request): JsonResponse
     {
-        return [
-            'username' => 'required|string',
-            'password' => 'required|string',
-        ];
+        $headers = $this->identityProvider->getHeaders($request);
+        $result  = $this->userClient->getAll($headers);
+        return response()->json($result['body'], $result['status']);
     }
 }
 ```
+
+Key characteristics:
+- **Invokable** — has a single `__invoke()` method (Laravel's container auto-resolves it)
+- **Constructor injection** — receives dependencies via constructor (client interfaces, IdentityProvider)
+- **Returns JsonResponse** — handles both success and error cases
+- **No state** — immutable, stateless, reusable
+
+### Action Index
+
+| Action | Domain | Input | Calls |
+|--------|--------|-------|-------|
+| `LoginAction` | Auth | username, password | `AuthService::login()` |
+| `RegisterAction` | Auth | username, password, name, email | `AuthService::register()` |
+| `UserFetchAction` | User | Request | `UserClientInterface::getAll()` |
+| `UserShowAction` | User | Request, id | `UserClientInterface::getById()` |
+| `UserCreateAction` | User | Request | `UserClientInterface::create()` |
+| `UserUpdateAction` | User | Request, id | `UserClientInterface::update()` |
+| `UserDeleteAction` | User | Request, id | `UserClientInterface::remove()` |
+| `ProductFetchAction` | Product | Request | `ProductClientInterface::getAll()` |
+| `ProductShowAction` | Product | Request, id | `ProductClientInterface::getById()` |
+| `ProductCreateAction` | Product | Request | `ProductClientInterface::create()` |
+| `ProductUpdateAction` | Product | Request, id | `ProductClientInterface::update()` |
+| `ProductDeleteAction` | Product | Request, id | `ProductClientInterface::remove()` |
+| `OrderFetchAction` | Order | Request | `OrderClientInterface::getAll()` |
+| `OrderShowAction` | Order | Request, id | `OrderClientInterface::getById()` |
+| `OrderCreateAction` | Order | Request | `OrderClientInterface::create()` |
+| `OrderUpdateStatusAction` | Order | Request, id | `OrderClientInterface::updateStatus()` |
+
+## Step 11 — Presentation Layer: Controllers
+
+Controllers are **ultra-thin entry points**. They follow this single pattern:
+
+```php
+public function index(Request $request, UserFetchAction $action)
+{
+    return $action($request);
+}
+```
+
+That's it. The controller method:
+1. Receives the HTTP request (validated by FormRequest for auth)
+2. **Injects the action** as a method parameter (Laravel's IoC container resolves it)
+3. Calls the action with the request/data
+4. Returns the action's JsonResponse directly
+
+No constructor dependencies. No business logic. No HTTP calls.
 
 ### AuthController
 
 ```php
 class AuthController extends Controller
 {
-    private AuthService $authService;
-
-    public function __construct(AuthService $authService) { ... }
-
-    public function login(LoginRequest $request)
+    public function login(LoginRequest $request, LoginAction $action)
     {
-        $result = $this->authService->login(
+        return $action(
             $request->input('username'),
             $request->input('password')
         );
+    }
 
-        if (!$result['success']) {
-            return response()->json($result['body'], $result['status'] ?? 401);
-        }
-
-        return response()->json([
-            'token' => $result['token'],
-            'user'  => $result['user']->toArray(),
-        ]);
+    public function register(RegisterRequest $request, RegisterAction $action)
+    {
+        return $action(
+            $request->input('username'),
+            $request->input('password'),
+            $request->input('name'),
+            $request->input('email')
+        );
     }
 }
 ```
 
 ### Per-Service Controllers
 
-| Controller | Injected dependencies | Handles |
-|------------|----------------------|---------|
-| `UserController` | `UserClientInterface`, `IdentityProvider` | `/api/users/*` |
-| `ProductController` | `ProductClientInterface`, `IdentityProvider` | `/api/products/*` |
-| `OrderController` | `OrderClientInterface`, `IdentityProvider` | `/api/orders/*` |
-
-Each controller uses the inherited `serialize()` / `serializeCollection()` helpers (defined in base `Controller`) to convert DTOs to JSON-safe arrays:
+Each controller delegates entirely to actions — never touches clients, IdentityProvider, or DTOs directly:
 
 ```php
-class Controller extends BaseController
+class UserController extends Controller
 {
-    use AuthorizesRequests, ValidatesRequests;
+    public function index(Request $request, UserFetchAction $action)  { return $action($request); }
+    public function show(Request $request, UserShowAction $action, int $id)    { return $action($request, $id); }
+    public function store(Request $request, UserCreateAction $action) { return $action($request); }
+    public function update(Request $request, UserUpdateAction $action, int $id) { return $action($request, $id); }
+    public function destroy(Request $request, UserDeleteAction $action, int $id) { return $action($request, $id); }
+}
 
-    protected function serialize(mixed $value): mixed
-    {
-        if (is_object($value) && method_exists($value, 'toArray')) {
-            return $value->toArray();
-        }
-        return $value;
-    }
+class ProductController extends Controller
+{
+    public function index(Request $request, ProductFetchAction $action)  { return $action($request); }
+    public function show(Request $request, ProductShowAction $action, int $id)    { return $action($request, $id); }
+    public function store(Request $request, ProductCreateAction $action) { return $action($request); }
+    public function update(Request $request, ProductUpdateAction $action, int $id) { return $action($request, $id); }
+    public function destroy(Request $request, ProductDeleteAction $action, int $id) { return $action($request, $id); }
+}
 
-    protected function serializeCollection(mixed $items): array
+class OrderController extends Controller
+{
+    public function index(Request $request, OrderFetchAction $action)          { return $action($request); }
+    public function show(Request $request, OrderShowAction $action, int $id)   { return $action($request, $id); }
+    public function store(Request $request, OrderCreateAction $action)         { return $action($request); }
+    public function updateStatus(Request $request, OrderUpdateStatusAction $action, int $id) { return $action($request, $id); }
+}
+```
+
+### Form Request Validation (`app/Http/Requests/`)
+
+Login and Register requests use Laravel Form Request classes:
+
+```php
+class LoginRequest extends FormRequest
+{
+    public function authorize(): bool { return true; }
+    public function rules(): array
     {
-        if (!is_array($items)) { return []; }
-        return array_map(fn ($item) => $this->serialize($item), $items);
+        return [
+            'username' => 'required|string',
+            'password' => 'required|string',
+        ];
     }
 }
 ```
@@ -601,7 +722,11 @@ auth:api middleware (Passport) validates the token
       → resolves the User model
       │
       ▼
-OrderController::index()
+OrderController::index(Request $request, OrderFetchAction $action)
+  → return $action($request);
+      │
+      ▼
+OrderFetchAction::__invoke($request)
       │
       ▼
 IdentityProvider::getHeaders($request)
@@ -613,11 +738,20 @@ OrderClientInterface::getAll($headers)
   → with X-User-Id and X-User-Role headers
       │
       ▼
-Order Service responds with orders
+Order Service responds with raw orders JSON
       │
       ▼
-OrderController serializes DTOs via serializeCollection()
-  → returns JSON response to browser
+ResponseFormatter::map($body, function ($order) {
+    return [
+        'id'        => $order['id'],
+        'customer'  => $order['customerName'],   // rename
+        'itemCount' => count($order['items']),   // derive
+        'total'     => $order['total'],
+    ];
+});
+      │
+      ▼
+Formatted JSON response returned to browser
 ```
 
 ---
@@ -656,8 +790,10 @@ Browser sends:
   │       http://order-service:3003/api/orders  │
   │       with X-User-Id / X-User-Role          │
   │                                             │
-  │  6. Controller serializes OrderData DTOs    │
-  │     → serializeCollection()                 │
+  │  6. OrderFetchAction transforms via         │
+  │     ResponseFormatter::map()                │
+  │     → customerName → customer              │
+  │     → itemCount = count(items)             │
   └─────────────────────────────────────────────┘
               │
               ▼
