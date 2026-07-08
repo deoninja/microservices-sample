@@ -32,25 +32,29 @@ API Gateway :8000          ← you only talk to this
 ```
 api-gateway/
 ├── app/
+│   ├── Exceptions/
+│   │   └── Handler.php              # converts exceptions to JSON responses
 │   ├── Helpers/
-│   │   └── ProxyHelper.php       # sends HTTP requests to microservices
+│   │   └── ProxyHelper.php          # sends HTTP requests to microservices
 │   ├── Http/
 │   │   ├── Controllers/
 │   │   │   ├── AuthController.php    # handles login & register
 │   │   │   └── GatewayController.php # handles all proxied routes
-│   │   ├── Middleware/
-│   │   │   └── JwtMiddleware.php     # checks JWT token on protected routes
 │   │   └── Kernel.php               # registers middleware aliases
 │   └── Providers/
 │       └── RouteServiceProvider.php  # loads routes/api.php
 ├── bootstrap/
-│   └── app.php                   # boots the Laravel app
+│   └── app.php                      # boots the Laravel app
 ├── config/
-│   ├── cors.php                  # CORS allowed origins
-│   └── services.php              # microservice URLs + JWT config
+│   ├── app.php                      # app config + service providers
+│   ├── cors.php                     # CORS allowed origins
+│   └── services.php                 # microservice URLs + JWT config
 ├── routes/
-│   └── api.php                   # all route definitions
-└── .env                          # environment variables
+│   └── api.php                      # all route definitions
+└── ...
+
+# At the project root:
+docker-compose.yml                  # Docker env vars including APP_KEY
 ```
 
 ---
@@ -66,7 +70,7 @@ $app->singleton(
 );
 ```
 
-**Why this matters:** By pointing to `App\Http\Kernel`, Laravel uses our custom kernel which registers the `jwt.auth` middleware alias. Without this, protected routes would crash with an unknown middleware error.
+**Why this matters:** By pointing to `App\Http\Kernel`, Laravel uses our custom kernel which registers middleware aliases. Without this, protected routes would crash with an unknown middleware error.
 
 ---
 
@@ -92,15 +96,50 @@ protected $middlewareGroups = [
 
 // Named aliases you can attach to individual routes
 protected $middlewareAliases = [
-    'jwt.auth' => JwtMiddleware::class,   // ← used on protected routes
+    'auth' => \Illuminate\Auth\Middleware\Authenticate::class,  // ← used on protected routes
 ];
 ```
 
 Think of middleware as a pipeline — every request passes through these layers before reaching a controller.
 
+The `auth` alias is the standard Laravel authentication middleware. When used as `auth:api`, it resolves the `api` guard from `config/auth.php` (which uses Passport) and authenticates the user via the Bearer token.
+
 ---
 
-## Step 3 — Configuration (`config/services.php`)
+## Step 3 — Service Providers (`config/app.php`)
+
+This file lists all the service providers that boot during application startup. Two key additions were made:
+
+### `Illuminate\Auth\AuthServiceProvider`
+
+This framework provider registers the `auth` singleton in the Laravel container:
+
+```php
+$this->app->singleton('auth', fn ($app) => new AuthManager($app));
+```
+
+Without this provider, any call to `Auth::user()`, `$request->user()`, or the `auth:api` middleware would fail with:
+```
+"Target class [auth] does not exist."
+```
+
+It also registers request rebind handlers so that `$request->user()` works correctly:
+
+```php
+$this->app->rebinding('request', function ($app, $request) {
+    $request->setUserResolver(function ($guard = null) use ($app) {
+        return call_user_func($app['auth']->userResolver(), $guard);
+    });
+});
+```
+
+### `Laravel\Passport\PassportServiceProvider`
+
+Registered below the AuthServiceProvider, this provides OAuth2 token authentication. The `api` guard in `config/auth.php` uses the `passport` driver.
+
+---
+
+## Step 4 — Configuration (`config/services.php`)
 
 This file stores the URLs of each microservice and the JWT secret. Values come from `.env` so they can be changed per environment (local vs Docker vs production).
 
@@ -163,10 +202,10 @@ POST /api/auth/login
 POST /api/auth/register
 ```
 
-### Protected routes (require JWT token)
+### Protected routes (require JWT token via Passport)
 
 ```php
-// Users — all protected
+// Users — all protected with middleware('auth:api')
 GET    /api/users
 GET    /api/users/{id}
 POST   /api/users
@@ -176,67 +215,55 @@ DELETE /api/users/{id}
 // Products — read is public, write is protected
 GET    /api/products          ← no token needed
 GET    /api/products/{id}     ← no token needed
-POST   /api/products          ← token required
-PUT    /api/products/{id}     ← token required
-DELETE /api/products/{id}     ← token required
+POST   /api/products          ← auth:api (token required)
+PUT    /api/products/{id}     ← auth:api (token required)
+DELETE /api/products/{id}     ← auth:api (token required)
 
-// Orders — all protected
+// Orders — all protected with middleware('auth:api')
 GET  /api/orders
 GET  /api/orders/{id}
 POST /api/orders
 PUT  /api/orders/{id}/status
 ```
 
-The `->middleware('jwt.auth')` call on a route means the `JwtMiddleware` runs before the controller method.
+The `->middleware('auth:api')` call uses Laravel's standard `auth` middleware (registered in Kernel.php) with the `api` guard from `config/auth.php`. This guard uses Passport to validate the Bearer token and resolve the authenticated user.
 
----
-
-## Step 6 — JWT Middleware (`app/Http/Middleware/JwtMiddleware.php`)
-
-This middleware runs on every protected route. Here is exactly what it does:
+### How Passport auth works
 
 ```
-Incoming request
+Incoming request with Authorization: Bearer <token>
       │
       ▼
-Does it have an Authorization: Bearer <token> header?
+1. auth middleware resolves the 'api' guard from config/auth.php
       │
-      ├── NO  → return 401 "Authentication required"
+      ▼
+2. Passport guard extracts the Bearer token from the header
       │
-      └── YES → decode the token using JWT_SECRET
+      ▼
+3. Validates the token against the oauth_access_tokens table
+      │
+      ├── Invalid/expired → throws AuthenticationException → 401 response
+      │
+      └── Valid → resolves the User model from oauth_clients and the token's user_id
                     │
-                    ├── Invalid/expired → return 401 "Invalid or expired token"
-                    │
-                    └── Valid → attach user data to the request, pass through
+                    ▼
+4. Authenticated user is available via:
+   - $request->user()      ← returns the User model
+   - Auth::user()           ← same user model
+   - Auth::id()             ← user's ID
 ```
 
-After a valid token is decoded, two things happen:
-
-1. The decoded user object is stored on the request attributes as `jwt_user` — controllers can read it later.
-2. Two headers are added to the request: `X-User-Id` and `X-User-Role` — these get forwarded to microservices so they know who is making the request.
-
-```php
-$request->attributes->set('jwt_user', (array) $decoded);
-$request->headers->set('X-User-Id',   $decoded->sub);
-$request->headers->set('X-User-Role', $decoded->role ?? 'user');
-```
-
-**JWT token payload structure:**
+**Token payload (Passport personal access token):**
 ```json
 {
-  "sub":      1,
-  "username": "admin",
-  "name":     "Admin User",
-  "email":    "admin@example.com",
-  "role":     "admin",
-  "iat":      1700000000,
-  "exp":      1700086400
+  "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9...",
+  "user": { "id": 1, "username": "admin", "name": "Admin User", "email": "admin@example.com", "role": "admin" }
 }
 ```
 
 ---
 
-## Step 7 — Authentication Controller (`app/Http/Controllers/AuthController.php`)
+## Step 6 — Authentication Controller (`app/Http/Controllers/AuthController.php`)
 
 ### Login flow
 
@@ -268,7 +295,7 @@ POST /api/auth/login
 **Successful response:**
 ```json
 {
-  "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+  "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9...",
   "user": {
     "id": 1,
     "username": "admin",
@@ -278,6 +305,8 @@ POST /api/auth/login
   }
 }
 ```
+
+Note: The token above is a Passport personal access token, signed with RSA keys (stored in `storage/oauth-private.key` and `storage/oauth-public.key`), not a simple HMAC JWT.
 
 ### Register flow
 
@@ -305,16 +334,16 @@ This controller handles every proxied route. It does not contain any business lo
 
 ### How headers are passed downstream
 
-Before forwarding, the controller reads the JWT user data that the middleware attached to the request and builds headers for the microservice:
+Before forwarding, the controller reads the authenticated user via `$request->user()` (which is set by Passport's `auth:api` middleware) and builds identity headers for the microservice:
 
 ```php
 private function getHeaders(Request $request): array
 {
     $headers = [];
-    if ($request->attributes->has('jwt_user')) {
-        $user = $request->attributes->get('jwt_user');
-        $headers['X-User-Id']   = $user['sub']  ?? '';
-        $headers['X-User-Role'] = $user['role'] ?? 'user';
+    $user = $request->user() ?? Auth::user();
+    if ($user) {
+        $headers['X-User-Id']   = $user->id;
+        $headers['X-User-Role'] = $user->role ?? 'user';
     }
     return $headers;
 }
@@ -329,12 +358,14 @@ GET /api/orders
 Authorization: Bearer <token>
       │
       ▼
-JwtMiddleware decodes token → attaches user to request
+auth:api middleware (Passport) validates the token
+      → resolves the User model
       │
       ▼
 GatewayController::getOrders()
       │
       ▼
+Reads user via $request->user() → gets id=2, role="user"
 Builds URL: http://localhost:3003/api/orders
 Adds headers: X-User-Id: 2, X-User-Role: user
       │
@@ -407,16 +438,16 @@ Browser sends:
   │                                             │
   │  2. RouteServiceProvider                    │
   │     → matches GET /api/orders               │
-  │     → route has jwt.auth middleware         │
+  │     → route has auth:api middleware         │
   │                                             │
-  │  3. JwtMiddleware                           │
+  │  3. auth:api middleware (Passport)          │
   │     → reads Bearer token                   │
-  │     → decodes with JWT_SECRET               │
-  │     → attaches user {id:2, role:"user"}     │
-  │       to request attributes                 │
+  │     → validates against oauth_access_tokens │
+  │     → resolves User model (id:2)           │
+  │     → sets Auth::user() on the container   │
   │                                             │
   │  4. GatewayController::getOrders()          │
-  │     → reads jwt_user from attributes        │
+  │     → $request->user() returns user id=2   │
   │     → builds headers:                       │
   │         X-User-Id: 2                        │
   │         X-User-Role: user                   │
@@ -440,21 +471,56 @@ Browser sends:
 
 ---
 
+## Exception Handler (`app/Exceptions/Handler.php`)
+
+The exception handler catches exceptions thrown during request processing and converts them to consistent JSON responses.
+
+### HTTP status codes returned
+
+| Status | Exception | Response |
+|--------|-----------|----------|
+| `401` | `AuthenticationException` | `{"error":"Unauthenticated","message":"..."}` |
+| `404` | `NotFoundHttpException` | `{"error":"Not found","message":"..."}` |
+| `405` | `MethodNotAllowedHttpException` | `{"error":"Method not allowed","message":"..."}` |
+| `422` | `ValidationException` | `{"error":"Validation failed","errors":{...}}` |
+| `500` | Any other exception | `{"error":"Server error","message":"..."}` |
+
+**Important:** The `AuthenticationException` handler returns `401` (not `500`) when the `auth:api` middleware rejects an invalid or missing token. This is the correct HTTP status for unauthenticated requests.
+
+---
+
 ## Environment Variables Reference
 
-All variables live in `api-gateway/.env`. Docker Compose overrides them via the `environment:` block.
+All variables live in `api-gateway/.env`. Docker Compose overrides them via the `environment:` block in `docker-compose.yml`.
 
-| Variable              | Default                          | Description                        |
-|-----------------------|----------------------------------|------------------------------------|
-| `APP_KEY`             | `base64:...`                     | Laravel encryption key             |
-| `APP_ENV`             | `local`                          | Environment name                   |
-| `APP_DEBUG`           | `true`                           | Show detailed errors                |
-| `APP_URL`             | `http://localhost:8000`          | Gateway base URL                   |
-| `USER_SERVICE_URL`    | `http://localhost:3001`          | User Service address               |
-| `PRODUCT_SERVICE_URL` | `http://localhost:3002`          | Product Service address            |
-| `ORDER_SERVICE_URL`   | `http://localhost:3003`          | Order Service address              |
-| `FRONTEND_URL`        | `http://localhost:3000`          | Allowed CORS origin                |
-| `JWT_SECRET`          | `microservices-secret-key-2024`  | Secret used to sign/verify tokens  |
+### Must be set
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_KEY` | `base64:...` | Laravel encryption key (must be 32 bytes when decoded) |
+
+### Application config
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_ENV` | `local` | Environment name |
+| `APP_DEBUG` | `true` | Show detailed errors |
+| `APP_URL` | `http://localhost:8000` | Gateway base URL |
+
+### Microservice URLs
+
+| Variable | Default | Docker override |
+|----------|---------|----------------|
+| `USER_SERVICE_URL` | `http://localhost:3001` | `http://user-service:3001` |
+| `PRODUCT_SERVICE_URL` | `http://localhost:3002` | `http://product-service:3002` |
+| `ORDER_SERVICE_URL` | `http://localhost:3003` | `http://order-service:3003` |
+
+### Frontend / Security
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FRONTEND_URL` | `http://localhost:3000` | Allowed CORS origin |
+| `JWT_SECRET` | `microservices-secret-key-2024` | Legacy JWT secret (used by user service for token validation) |
 
 ---
 
@@ -462,8 +528,9 @@ All variables live in `api-gateway/.env`. Docker Compose overrides them via the 
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `401 Authentication required` | No `Authorization` header sent | Add `Authorization: Bearer <token>` header |
-| `401 Invalid or expired token` | Token is wrong or older than 24h | Log in again to get a fresh token |
-| `502 Microservice unavailable` | A Node.js service is not running | Start the relevant service |
-| `500` on any route | Middleware not registered | Check `bootstrap/app.php` binds `App\Http\Kernel` |
+| `401 Unauthenticated` | No `Authorization` header sent | Add `Authorization: Bearer <token>` header |
+| `400/401` from auth endpoints | Token is wrong or expired | Log in again to get a fresh token |
+| `502 Microservice unavailable` | A Node.js service is not running | Start the relevant service (`docker compose up`) |
+| `Target class [auth] does not exist` | `Illuminate\Auth\AuthServiceProvider` not registered | Add it to `config/app.php` providers list |
+| `Unsupported cipher or incorrect key` | APP_KEY is invalid or wrong length | Generate a valid key with `php artisan key:generate` |
 | CORS error in browser | Frontend URL not in allowed origins | Set `FRONTEND_URL` in `.env` to match your frontend URL |

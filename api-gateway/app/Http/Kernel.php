@@ -65,6 +65,6 @@ class Kernel extends HttpKernel
      * Laravel looks up 'jwt.auth' here and runs JwtMiddleware.
      */
     protected $middlewareAliases = [
-        //
+        'auth' => \Illuminate\Auth\Middleware\Authenticate::class,
     ];
 }

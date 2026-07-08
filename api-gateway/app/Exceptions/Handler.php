@@ -3,6 +3,7 @@
 namespace App\Exceptions;
 
 use Illuminate\Foundation\Exceptions\Handler as ExceptionHandler;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Http\Exceptions\MethodNotAllowedHttpException;
 use Illuminate\Http\Exceptions\NotFoundHttpException;
 use Illuminate\Validation\ValidationException;
@@ -34,6 +35,14 @@ class Handler extends ExceptionHandler
                 'error'   => 'Validation failed',
                 'errors'  => $e->errors(),
             ], 422);
+        }
+
+        // 401 — authentication failed (invalid/expired token)
+        if ($e instanceof AuthenticationException) {
+            return response()->json([
+                'error'   => 'Unauthenticated',
+                'message' => 'Authentication is required to access this resource.',
+            ], 401);
         }
 
         // All other exceptions — return 500 with the message in debug mode

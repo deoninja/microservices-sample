@@ -9,8 +9,8 @@ return [
     'locale' => 'en',
     'fallback_locale' => 'en',
     'faker_locale' => 'en_US',
-    'cipher' => 'AES-256-CBC',
-    'key' => env('APP_KEY', 'base64:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGH=='),
+    'cipher' => env('APP_CIPHER', 'AES-256-CBC'),
+    'key' => env('APP_KEY', 'base64:DM7QNXETl7lWPjUdg6bPvHu4T1Ef3cDMKbwVlhlhaYM='),
     'namespace' => 'App',
     'providers' => [
         // Core framework providers needed by every Laravel app
@@ -29,6 +29,9 @@ return [
 
         // Needed for Blade error pages and storage paths
         Illuminate\View\ViewServiceProvider::class,
+
+        // Auth system — registers the 'auth' singleton in the container
+        Illuminate\Auth\AuthServiceProvider::class,
 
         // OAuth2 server for API token authentication
         Laravel\Passport\PassportServiceProvider::class,

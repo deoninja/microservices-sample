@@ -28,7 +28,7 @@ Content-Type: application/json
    - ValidatePostSize → checks body isn't too large
 
 3. RouteServiceProvider matches the route to AuthController::login()
-   - No jwt.auth middleware on this route — login is public
+   - No auth:api middleware on this route — login is public
 
 4. AuthController::login() runs:
 
@@ -53,27 +53,30 @@ Content-Type: application/json
 
 6. Back in AuthController:
    - If User Service returned an error → gateway returns 401 to the browser
-   - If success → builds a JWT payload:
-     {
-       "sub":      2,           ← user ID
-       "username": "john",
-       "name":     "John Doe",
-       "email":    "john@example.com",
-       "role":     "user",
-       "iat":      1720000000,  ← issued at (now)
-       "exp":      1720086400   ← expires in 24 hours
-     }
+   - If success → creates/updates a local User model (for Passport token issuance)
+     and issues a Passport personal access token:
 
-7. JWT::encode() signs the payload with JWT_SECRET using HS256
-   Produces a token string: eyJ0eXAiOiJKV1Qi...
+   a) Updates or creates a local user record:
+      User::updateOrCreate(['id' => $userData['id']], [
+          'username' => $userData['username'],
+          'name'     => $userData['name'],
+          'email'    => $userData['email'],
+          'role'     => $userData['role'] ?? 'user',
+      ]);
 
-8. Gateway returns 200 to the browser:
+   b) Issues a Passport personal access token:
+      $token = $localUser->createToken('api-access-token')->accessToken;
+
+   c) The token is signed with RSA keys (oauth-private.key / oauth-public.key)
+      stored in storage/
+
+7. Gateway returns 200 to the browser:
    {
-     "token": "eyJ0eXAiOiJKV1Qi...",
+     "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9...",
      "user": { "id": 2, "username": "john", ... }
    }
 
-9. Frontend stores token in localStorage
+8. Frontend stores token in localStorage
    Every future request includes: Authorization: Bearer eyJ0eXAiOiJKV1Qi...
 ```
 
@@ -159,7 +162,7 @@ You must be logged in. Include the token from login.
 
 ```
 POST http://localhost:8000/api/orders
-Authorization: Bearer eyJ0eXAiOiJKV1Qi...
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9...
 Content-Type: application/json
 
 {
@@ -178,31 +181,29 @@ Content-Type: application/json
 
 2. Laravel Kernel runs global middleware (CORS, ValidatePostSize)
 
-3. RouteServiceProvider matches the route — POST /orders has jwt.auth middleware
+3. RouteServiceProvider matches the route — POST /orders has auth:api middleware
 
-4. JwtMiddleware runs BEFORE the controller:
+4. auth:api middleware (Passport) runs BEFORE the controller:
 
    a) Reads the Authorization header → extracts the Bearer token
 
-   b) If no token → returns 401 "Authentication required" immediately
+   b) If no token → throws AuthenticationException
+      Exception handler catches it → returns 401 "Unauthenticated"
       (controller never runs)
 
-   c) JWT::decode() verifies the token:
-      - Checks the signature using JWT_SECRET
-        (confirms the token was issued by this gateway, not forged)
-      - Checks the exp claim — rejects if expired
-      - Decodes the payload into a PHP object
+   c) Passport guard validates the token:
+      - Checks the token against oauth_access_tokens table
+      - Verifies the RSA signature using oauth-public.key
+      - Checks if the token is revoked or expired
 
-   d) If invalid → returns 401 "Invalid or expired token"
+   d) If invalid → throws AuthenticationException → 401
 
-   e) If valid → attaches user data to the request:
-      $request->attributes->set('jwt_user', ['sub'=>2, 'role'=>'user', ...])
-      $request->headers->set('X-User-Id',   '2')
-      $request->headers->set('X-User-Role', 'user')
+   e) If valid → resolves the User model from the token's user_id
+      $request->user() returns the authenticated User model
 
 5. GatewayController::createOrder() runs:
 
-   a) getHeaders() reads jwt_user from request attributes:
+   a) getHeaders() calls $request->user():
       returns ['X-User-Id' => '2', 'X-User-Role' => 'user']
 
    b) ProxyHelper::forward() sends:
@@ -213,7 +214,7 @@ Content-Type: application/json
 6. Order Service (Node.js :3003) receives the request:
 
    a) Reads X-User-Id from headers → this becomes the order's userId
-      (users can't fake this — it comes from the verified JWT)
+      (users can't fake this — it comes from the verified Passport token)
 
    b) Validates the items array:
       - Must be a non-empty array
@@ -244,8 +245,8 @@ Content-Type: application/json
 
 | Response | Reason |
 |----------|--------|
-| `401 Authentication required` | No Authorization header sent |
-| `401 Invalid or expired token` | Token is wrong, tampered, or older than 24h — log in again |
+| `401 Unauthenticated` | No Authorization header sent |
+| `401` from auth endpoints | Token is wrong, tampered, or expired — log in again |
 | `400 Order must contain at least one item` | items array is empty or missing |
 | `400 Each item requires name, quantity, and price` | An item is missing a field |
 | `400 Item quantity must be at least 1` | quantity is 0 or negative |
@@ -263,11 +264,11 @@ POST /api/auth/login     GET /api/products        POST /api/orders
         │                  No token needed          Needs token
         │                       │                   from login
         ▼                       ▼                        ▼
-  User Service           Product Service          JwtMiddleware
-  verifies password      returns catalog          verifies token
+  User Service           Product Service          auth:api (Passport)
+  verifies password      returns catalog          validates token
         │                       │                        │
-  Gateway signs                 │                 Order Service
-  JWT token                     │                 reads X-User-Id
+  Gateway creates               │                 Order Service
+  Passport access token         │                 reads X-User-Id
         │                       │                 creates order
         ▼                       ▼                        ▼
   { token, user }        [ ...products ]          { id, total, status }

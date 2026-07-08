@@ -16,8 +16,9 @@ use Laravel\Passport\Bridge\PersonalAccessGrant;
 use Laravel\Passport\Bridge\RefreshTokenRepository;
 use Laravel\Passport\Guards\TokenGuard;
 use Laravel\Passport\Http\Controllers\AuthorizationController;
-use Lcobucci\JWT\Configuration;
-use Lcobucci\JWT\Parser;
+use Lcobucci\JWT\Encoding\JoseEncoder;
+use Lcobucci\JWT\Parser as ParserContract;
+use Lcobucci\JWT\Token\Parser;
 use League\OAuth2\Server\AuthorizationServer;
 use League\OAuth2\Server\CryptKey;
 use League\OAuth2\Server\Grant\AuthCodeGrant;
@@ -38,7 +39,6 @@ class PassportServiceProvider extends ServiceProvider
     {
         $this->registerRoutes();
         $this->registerResources();
-        $this->registerMigrations();
         $this->registerPublishing();
         $this->registerCommands();
 
@@ -74,18 +74,6 @@ class PassportServiceProvider extends ServiceProvider
     }
 
     /**
-     * Register the Passport migration files.
-     *
-     * @return void
-     */
-    protected function registerMigrations()
-    {
-        if ($this->app->runningInConsole() && Passport::$runsMigrations && ! config('passport.client_uuids')) {
-            $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
-        }
-    }
-
-    /**
      * Register the package's publishable resources.
      *
      * @return void
@@ -93,7 +81,11 @@ class PassportServiceProvider extends ServiceProvider
     protected function registerPublishing()
     {
         if ($this->app->runningInConsole()) {
-            $this->publishes([
+            $publishesMigrationsMethod = method_exists($this, 'publishesMigrations')
+                ? 'publishesMigrations'
+                : 'publishes';
+
+            $this->{$publishesMigrationsMethod}([
                 __DIR__.'/../database/migrations' => database_path('migrations'),
             ], 'passport-migrations');
 
@@ -168,9 +160,11 @@ class PassportServiceProvider extends ServiceProvider
                     $this->makeRefreshTokenGrant(), Passport::tokensExpireIn()
                 );
 
-                $server->enableGrantType(
-                    $this->makePasswordGrant(), Passport::tokensExpireIn()
-                );
+                if (Passport::$passwordGrantEnabled) {
+                    $server->enableGrantType(
+                        $this->makePasswordGrant(), Passport::tokensExpireIn()
+                    );
+                }
 
                 $server->enableGrantType(
                     new PersonalAccessGrant, Passport::personalAccessTokensExpireIn()
@@ -294,8 +288,8 @@ class PassportServiceProvider extends ServiceProvider
      */
     protected function registerJWTParser()
     {
-        $this->app->singleton(Parser::class, function () {
-            return Configuration::forUnsecuredSigner()->parser();
+        $this->app->singleton(ParserContract::class, function () {
+            return new Parser(new JoseEncoder);
         });
     }
 
@@ -315,7 +309,7 @@ class PassportServiceProvider extends ServiceProvider
     }
 
     /**
-     * Create a CryptKey instance without permissions check.
+     * Create a CryptKey instance.
      *
      * @param  string  $type
      * @return \League\OAuth2\Server\CryptKey
@@ -328,7 +322,7 @@ class PassportServiceProvider extends ServiceProvider
             $key = 'file://'.Passport::keyPath('oauth-'.$type.'.key');
         }
 
-        return new CryptKey($key, null, false);
+        return new CryptKey($key, null, Passport::$validateKeyPermissions && ! windows_os());
     }
 
     /**

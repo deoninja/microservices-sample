@@ -1,4 +1,4 @@
-FROM php:8.2-cli
+FROM php:8.5-cli
 
 WORKDIR /app
 
@@ -13,7 +13,7 @@ RUN php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" \
     && php -r "unlink('composer-setup.php');"
 
 COPY composer.json composer.lock ./
-RUN composer install --no-interaction --prefer-dist --optimize-autoloader
+RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
 
 # Copy all files EXCEPT .env — environment variables come from docker-compose.yml
 COPY . .

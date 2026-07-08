@@ -26,6 +26,7 @@ services:
       - USER_SERVICE_URL=http://user-service:3001
       - PRODUCT_SERVICE_URL=http://product-service:3002
       - ORDER_SERVICE_URL=http://order-service:3003
+      - APP_KEY=base64:1IUtNhWTo7hjxKeDXONUQc03wgNeMQDTTdW+o51e7jw=
       - JWT_SECRET=microservices-secret-key-2024
     depends_on:
       - user-service

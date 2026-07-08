@@ -28,9 +28,10 @@ Browser (React :3000)
 Laravel API Gateway (:8000)
     │
     │  1. CORS middleware checks the origin
-    │  2. JwtMiddleware validates the Bearer token (on protected routes)
-    │  3. GatewayController builds the microservice URL
-    │  4. ProxyHelper sends the HTTP request via Guzzle
+    │  2. auth:api middleware validates the Bearer token via Passport
+    │     (on protected routes — products GET routes are public)
+    │  3. GatewayController reads authenticated user via $request->user()
+    │  4. ProxyHelper sends the HTTP request via Guzzle with X-User-Id headers
     │
     ├──► User Service (:3001)    — users, login, register
     ├──► Product Service (:3002) — product catalog
@@ -39,7 +40,25 @@ Laravel API Gateway (:8000)
 
 ## Key concepts to understand
 
-- **JWT flow** — login returns a token → stored in localStorage → attached to every request by the Axios interceptor → verified by JwtMiddleware → user identity forwarded as `X-User-Id` / `X-User-Role` headers to microservices
+- **Passport auth** — login returns a Passport personal access token → stored in localStorage → attached to every request by the Axios interceptor → verified by `auth:api` middleware via Passport's OAuth2 guard → user identity forwarded as `X-User-Id` / `X-User-Role` headers to microservices
 - **Proxy pattern** — the gateway never stores data itself; it only forwards requests and returns responses
 - **In-memory stores** — all three Node.js services use plain JavaScript arrays as their "database"; data resets on restart
-- **Public vs protected routes** — product GET routes are public; everything else requires a JWT
+- **Public vs protected routes** — product GET routes are public; everything else requires a Bearer token validated by Passport
+
+## Recent changes
+
+### Fixed: `Target class [auth] does not exist`
+
+The `Illuminate\Auth\AuthServiceProvider` was missing from the providers list in `config/app.php`. This provider registers the `auth` singleton in the container, which is required by `Auth::user()`, `$request->user()`, and the `auth:api` middleware.
+
+### Fixed: Auth middleware alias
+
+The `auth` middleware alias (`\Illuminate\Auth\Middleware\Authenticate`) was added to `app/Http/Kernel.php` so that `middleware('auth:api')` can be resolved in routes.
+
+### Fixed: 401 instead of 500 for unauthenticated requests
+
+The exception handler (`app/Exceptions/Handler.php`) now catches `AuthenticationException` and returns a `401` JSON response instead of a generic `500`.
+
+### Fixed: APP_KEY missing in Docker
+
+The `APP_KEY` environment variable was added to `docker-compose.yml` so the Laravel encryption key is available in Docker (the `.env` file is deleted during the Docker build). The fallback key in `config/app.php` was also fixed to be a valid 32-byte key.
