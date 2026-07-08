@@ -39,7 +39,7 @@ Content-Type: application/json
 
    b) Reads USER_SERVICE_URL from config (http://user-service:3001 in Docker)
 
-   c) ProxyHelper::forward() sends:
+   c) UserService::login() sends:
       POST http://user-service:3001/api/users/login
       Body: { "username": "john", "password": "password" }
 
@@ -112,23 +112,14 @@ GET http://localhost:8000/api/products?search=keyboard
 
 2. Laravel Kernel runs global middleware (CORS, ValidatePostSize)
 
-3. RouteServiceProvider matches the route to GatewayController::getProducts()
-   - No jwt.auth middleware on GET /products — it is public
+3. RouteServiceProvider matches the route to ProductController::index()
+   - No auth:api middleware on GET /products — it is public
 
-4. GatewayController::getProducts() runs:
+4. ProductController::index() runs:
 
-   a) Reads the ?search= query parameter (empty string if not provided)
-
-   b) Builds the URL:
-      - No search: http://product-service:3002/api/products
-      - With search: http://product-service:3002/api/products?search=keyboard
-        (urlencode() makes the search term URL-safe)
-
-   c) getHeaders() returns an empty array — no JWT on this request,
-      so no X-User-Id or X-User-Role headers are added
-
-   d) ProxyHelper::forward() sends:
+   a) ProductService::getAll($search) sends:
       GET http://product-service:3002/api/products
+      (with ?search=keyboard if a search term is provided)
 
 5. Product Service (Node.js :3002) receives the request:
    - If no search → returns all 5 products from the in-memory store
@@ -141,7 +132,7 @@ GET http://localhost:8000/api/products?search=keyboard
        ...
      ]
 
-6. GatewayController returns the Product Service response directly to the browser
+6. ProductController returns the Product Service response directly to the browser
    - Same status code, same body — the gateway doesn't modify the data
 ```
 
@@ -201,12 +192,12 @@ Content-Type: application/json
    e) If valid → resolves the User model from the token's user_id
       $request->user() returns the authenticated User model
 
-5. GatewayController::createOrder() runs:
+5. OrderController::store() runs:
 
-   a) getHeaders() calls $request->user():
+   a) IdentityProvider::getHeaders($request) calls $request->user():
       returns ['X-User-Id' => '2', 'X-User-Role' => 'user']
 
-   b) ProxyHelper::forward() sends:
+   b) OrderService::create($data, $headers) sends:
       POST http://order-service:3003/api/orders
       Headers: X-User-Id: 2, X-User-Role: user
       Body: { "customerName": "John Doe", "items": [...] }
@@ -237,7 +228,7 @@ Content-Type: application/json
 
    e) Returns 201 Created with the new order object
 
-7. GatewayController returns the Order Service response to the browser
+7. OrderController returns the Order Service response to the browser
    - 201 status, full order object in the body
 ```
 

@@ -32,29 +32,42 @@ API Gateway :8000          ← you only talk to this
 ```
 api-gateway/
 ├── app/
+│   ├── Auth/
+│   │   └── IdentityProvider.php          # builds X-User-Id / X-User-Role headers (SRP)
+│   ├── Contracts/
+│   │   └── ServiceClientInterface.php    # contract for all microservice clients (DIP)
 │   ├── Exceptions/
-│   │   └── Handler.php              # converts exceptions to JSON responses
-│   ├── Helpers/
-│   │   └── ProxyHelper.php          # sends HTTP requests to microservices
+│   │   └── Handler.php                   # converts exceptions to JSON responses
 │   ├── Http/
 │   │   ├── Controllers/
-│   │   │   ├── AuthController.php    # handles login & register
-│   │   │   └── GatewayController.php # handles all proxied routes
-│   │   └── Kernel.php               # registers middleware aliases
-│   └── Providers/
-│       └── RouteServiceProvider.php  # loads routes/api.php
+│   │   │   ├── AuthController.php        # handles login & register
+│   │   │   ├── UserController.php        # user CRUD proxy (SRP)
+│   │   │   ├── ProductController.php     # product CRUD proxy (SRP)
+│   │   │   └── OrderController.php       # order CRUD proxy (SRP)
+│   │   └── Kernel.php                    # registers middleware aliases
+│   ├── Models/
+│   │   └── User.php                      # Passport-authenticatable user model
+│   ├── Providers/
+│   │   ├── AppServiceProvider.php        # registers service bindings (DIP)
+│   │   ├── AuthServiceProvider.php
+│   │   └── RouteServiceProvider.php      # loads routes/api.php
+│   └── Services/
+│       ├── BaseService.php               # abstract HTTP client (base for all services)
+│       ├── UserService.php               # User Service proxy (SRP)
+│       ├── ProductService.php            # Product Service proxy (SRP)
+│       └── OrderService.php              # Order Service proxy (SRP)
 ├── bootstrap/
-│   └── app.php                      # boots the Laravel app
+│   └── app.php                           # boots the Laravel app
 ├── config/
-│   ├── app.php                      # app config + service providers
-│   ├── cors.php                     # CORS allowed origins
-│   └── services.php                 # microservice URLs + JWT config
+│   ├── app.php                           # app config + service providers
+│   ├── cors.php                          # CORS allowed origins
+│   └── services.php                      # microservice URLs
 ├── routes/
-│   └── api.php                      # all route definitions
+│   └── api.php                           # all route definitions
 └── ...
 
 # At the project root:
-docker-compose.yml                  # Docker env vars including APP_KEY
+docker-compose.yml                       # Docker env vars including APP_KEY
 ```
 
 ---
@@ -108,7 +121,7 @@ The `auth` alias is the standard Laravel authentication middleware. When used as
 
 ## Step 3 — Service Providers (`config/app.php`)
 
-This file lists all the service providers that boot during application startup. Two key additions were made:
+This file lists all the service providers that boot during application startup. The following key providers are registered:
 
 ### `Illuminate\Auth\AuthServiceProvider`
 
@@ -136,6 +149,29 @@ $this->app->rebinding('request', function ($app, $request) {
 ### `Laravel\Passport\PassportServiceProvider`
 
 Registered below the AuthServiceProvider, this provides OAuth2 token authentication. The `api` guard in `config/auth.php` uses the `passport` driver.
+
+### Application Service Provider (`App\Providers\AppServiceProvider`)
+
+This provider registers the microservice proxy clients and identity provider as singletons in the container, following the Dependency Inversion Principle:
+
+```php
+public function register(): void
+{
+    // Each microservice client is a singleton — same instance reused across requests
+    $this->app->singleton(UserService::class);
+    $this->app->singleton(ProductService::class);
+    $this->app->singleton(OrderService::class);
+    $this->app->singleton(IdentityProvider::class);
+
+    // Override the exception handler for JSON-only responses
+    $this->app->bind(
+        \Illuminate\Contracts\Debug\ExceptionHandler::class,
+        \App\Exceptions\Handler::class
+    );
+}
+```
+
+Because these services are bound here, controllers can declare them in their constructors and Laravel's container automatically resolves (injects) them.
 
 ---
 
@@ -263,7 +299,99 @@ Incoming request with Authorization: Bearer <token>
 
 ---
 
-## Step 6 — Authentication Controller (`app/Http/Controllers/AuthController.php`)
+## Step 6 — Services Layer (`app/Services/`)
+
+Following the **Single Responsibility Principle**, each microservice has its own dedicated service class. Controllers delegate all HTTP communication to these services.
+
+### Architecture
+
+```
+Controller (request handling)          ← SRP: only receives requests, returns responses
+    │
+    │  depends on abstraction (DIP)
+    ▼
+ServiceClientInterface                 ← contract defines get/post/put/delete
+    │
+    │  implemented by
+    ▼
+BaseService (abstract)                 ← shared HTTP logic (Guzzle, error handling)
+    │
+    ├── UserService    → http://user-service:3001
+    ├── ProductService → http://product-service:3002
+    └── OrderService   → http://order-service:3003
+```
+
+### `ServiceClientInterface` (`app/Contracts/ServiceClientInterface.php`)
+
+This is the contract that all microservice clients must implement. By depending on this abstraction, controllers are decoupled from the concrete HTTP implementation (Dependency Inversion Principle).
+
+```php
+interface ServiceClientInterface
+{
+    public function getBaseUrl(): string;
+    public function get(string $path, array $headers = []): array;
+    public function post(string $path, array $data = [], array $headers = []): array;
+    public function put(string $path, array $data = [], array $headers = []): array;
+    public function delete(string $path, array $headers = []): array;
+}
+```
+
+### `BaseService` (`app/Services/BaseService.php`)
+
+The abstract base class that implements the common HTTP logic:
+- Creates a Guzzle client with sensible defaults (10s timeout, 5s connect timeout)
+- Handles JSON encoding of request bodies
+- Decodes JSON responses
+- Catches `GuzzleException` and returns a 502 "Microservice unavailable" fallback
+- All methods return a consistent `{status, body, success}` array
+
+### Concrete Service Classes
+
+Each service extends `BaseService` and only needs to provide its base URL and service-specific methods:
+
+| Service | Base URL | Key methods |
+|---------|----------|-------------|
+| `UserService` | `config('services.user_service.url')` | `login()`, `register()`, `getAll()`, `getById()`, `create()`, `update()`, `remove()` |
+| `ProductService` | `config('services.product_service.url')` | `getAll(search)`, `getById()`, `create()`, `update()`, `remove()` |
+| `OrderService` | `config('services.order_service.url')` | `getAll()`, `getById()`, `create()`, `updateStatus()` |
+
+### `IdentityProvider` (`app/Auth/IdentityProvider.php`)
+
+A dedicated class with the **single responsibility** of building the identity headers (`X-User-Id`, `X-User-Role`) that get forwarded to microservices:
+
+```php
+class IdentityProvider
+{
+    public function getHeaders(Request $request): array
+    {
+        $headers = [];
+        $user = $request->user() ?? Auth::user();
+        if ($user) {
+            $headers['X-User-Id']   = (string) $user->id;
+            $headers['X-User-Role'] = $user->role ?? 'user';
+        }
+        return $headers;
+    }
+}
+```
+
+---
+
+## Step 7 — Authentication Controller (`app/Http/Controllers/AuthController.php`)
+
+Uses **Dependency Injection**: the `UserService` is injected via the constructor (not static calls).
+
+```php
+class AuthController extends Controller
+{
+    private UserService $userService;
+
+    public function __construct(UserService $userService)
+    {
+        $this->userService = $userService;
+    }
+}
+```
 
 ### Login flow
 
@@ -275,21 +403,15 @@ POST /api/auth/login
 1. Validate input (username + password required)
       │
       ▼
-2. Forward credentials to User Service
-   POST http://localhost:3001/api/users/login
+2. Forward credentials via UserService->login()
+   → POST http://user-service:3001/api/users/login
       │
-      ├── User Service returns error → respond 401 "Invalid credentials"
+      ├── Error → respond 401 "Invalid credentials"
       │
-      └── User Service returns user object
+      └── Success → create/update local User record, issue Passport token
             │
             ▼
-3. Build JWT payload with user data + expiry
-      │
-      ▼
-4. Sign token with JWT_SECRET using HS256 algorithm
-      │
-      ▼
-5. Return { token, user } to the browser
+3. Return { token, user } to the browser
 ```
 
 **Successful response:**
@@ -305,8 +427,6 @@ POST /api/auth/login
   }
 }
 ```
-
-Note: The token above is a Passport personal access token, signed with RSA keys (stored in `storage/oauth-private.key` and `storage/oauth-public.key`), not a simple HMAC JWT.
 
 ### Register flow
 
@@ -328,28 +448,44 @@ POST /api/auth/register
 
 ---
 
-## Step 8 — Gateway Controller (`app/Http/Controllers/GatewayController.php`)
+## Step 8 — Per-Service Controllers (SRP + ISP)
 
-This controller handles every proxied route. It does not contain any business logic — it just figures out the right microservice URL and forwards the request.
+Instead of one monolithic `GatewayController` handling every microservice, we now have **one controller per service**, following the **Single Responsibility Principle** and **Interface Segregation Principle**:
 
-### How headers are passed downstream
+| Controller | Handles routes for | Injected dependencies |
+|------------|-------------------|----------------------|
+| `UserController` | `/api/users/*` | `UserService`, `IdentityProvider` |
+| `ProductController` | `/api/products/*` | `ProductService`, `IdentityProvider` |
+| `OrderController` | `/api/orders/*` | `OrderService`, `IdentityProvider` |
 
-Before forwarding, the controller reads the authenticated user via `$request->user()` (which is set by Passport's `auth:api` middleware) and builds identity headers for the microservice:
+### Example — UserController
 
 ```php
-private function getHeaders(Request $request): array
+class UserController extends Controller
 {
-    $headers = [];
-    $user = $request->user() ?? Auth::user();
-    if ($user) {
-        $headers['X-User-Id']   = $user->id;
-        $headers['X-User-Role'] = $user->role ?? 'user';
+    private UserService $userService;
+    private IdentityProvider $identityProvider;
+
+    public function __construct(UserService $userService, IdentityProvider $identityProvider)
+    {
+        // Dependencies injected by the container (DIP)
+        $this->userService = $userService;
+        $this->identityProvider = $identityProvider;
     }
-    return $headers;
+
+    public function index(Request $request)
+    {
+        $headers = $this->identityProvider->getHeaders($request);
+        $result  = $this->userService->getAll($headers);
+        return response()->json($result['body'], $result['status']);
+    }
+    // ... show, store, update, destroy follow the same pattern
 }
 ```
 
-This means the microservices never need to decode a JWT themselves — they just read `X-User-Id` and `X-User-Role` from the incoming headers.
+### How headers are passed downstream
+
+The `IdentityProvider` builds the identity headers, and the service classes forward them to the microservice via HTTP requests.
 
 ### Example — GET /api/orders
 
@@ -362,34 +498,31 @@ auth:api middleware (Passport) validates the token
       → resolves the User model
       │
       ▼
-GatewayController::getOrders()
+OrderController::index()
       │
       ▼
-Reads user via $request->user() → gets id=2, role="user"
-Builds URL: http://localhost:3003/api/orders
-Adds headers: X-User-Id: 2, X-User-Role: user
+IdentityProvider::getHeaders($request)
+  → reads $request->user() → X-User-Id: 2, X-User-Role: user
       │
       ▼
-ProxyHelper::forward('GET', url, [], headers)
+OrderService::getAll($headers)
+  → GET http://order-service:3003/api/orders
+  → with X-User-Id and X-User-Role headers
       │
       ▼
 Order Service responds with orders for user 2
       │
       ▼
-Gateway returns the same response to the browser
+OrderController returns the same response to the browser
 ```
 
 ---
 
-## Step 9 — Proxy Helper (`app/Helpers/ProxyHelper.php`)
+## Step 9 — Base Service (`app/Services/BaseService.php`)
 
-This is the class that actually makes the HTTP call to a microservice using Guzzle.
+This is the abstract class that makes the actual HTTP call to a microservice via Guzzle. All concrete services (`UserService`, `ProductService`, `OrderService`) extend it.
 
-```php
-public static function forward(string $method, string $url, array $data, array $headers): array
-```
-
-It always returns an array with three keys:
+Every request returns a consistent array:
 
 | Key       | Type    | Description                              |
 |-----------|---------|------------------------------------------|
@@ -399,7 +532,7 @@ It always returns an array with three keys:
 
 **What happens if a microservice is down?**
 
-Guzzle throws a `GuzzleException`. The helper catches it, logs the error, and returns:
+Guzzle throws a `GuzzleException`. `BaseService::request()` catches it, logs the error, and returns:
 
 ```json
 {
@@ -411,7 +544,7 @@ Guzzle throws a `GuzzleException`. The helper catches it, logs the error, and re
 
 The gateway then sends a `502 Bad Gateway` response to the browser instead of crashing.
 
-**Guzzle client settings:**
+**Guzzle client settings (set in BaseService constructor):**
 
 | Setting           | Value | Meaning                                      |
 |-------------------|-------|----------------------------------------------|
@@ -446,14 +579,14 @@ Browser sends:
   │     → resolves User model (id:2)           │
   │     → sets Auth::user() on the container   │
   │                                             │
-  │  4. GatewayController::getOrders()          │
-  │     → $request->user() returns user id=2   │
-  │     → builds headers:                       │
-  │         X-User-Id: 2                        │
-  │         X-User-Role: user                   │
+  │  4. OrderController::index()                │
+  │     → IdentityProvider::getHeaders()        │
+  │       → $request->user() returns user id=2 │
+  │         X-User-Id: 2, X-User-Role: user    │
   │                                             │
-  │  5. ProxyHelper::forward()                  │
-  │     → GET http://localhost:3003/api/orders  │
+  │  5. OrderService::getAll($headers)          │
+  │     → BaseService.request('GET', ...)       │
+  │     → GET http://order-service:3003/orders  │
   │       with X-User-Id and X-User-Role        │
   └─────────────────────────────────────────────┘
               │

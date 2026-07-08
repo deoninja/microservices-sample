@@ -47,18 +47,38 @@ Laravel API Gateway (:8000)
 
 ## Recent changes
 
-### Fixed: `Target class [auth] does not exist`
+### SOLID Refactoring
 
-The `Illuminate\Auth\AuthServiceProvider` was missing from the providers list in `config/app.php`. This provider registers the `auth` singleton in the container, which is required by `Auth::user()`, `$request->user()`, and the `auth:api` middleware.
+The API Gateway was refactored to follow SOLID principles:
+
+| Principle | How it was applied |
+|-----------|-------------------|
+| **S**ingle Responsibility | Each microservice has its own controller (`UserController`, `ProductController`, `OrderController`) and service (`UserService`, `ProductService`, `OrderService`). Identity header building extracted to `IdentityProvider`. |
+| **O**pen/Closed | New microservices can be added by creating new controllers and services without modifying existing code. |
+| **L**iskov Substitution | All service classes extend `BaseService` and implement `ServiceClientInterface` — they can be swapped freely. |
+| **I**nterface Segregation | Each controller has only the methods it needs. No monolithic `GatewayController` with unrelated methods. |
+| **D**ependency Inversion | Controllers depend on injected service abstractions (`UserService`, `ProductService`, etc.) via constructor injection, not on static helper calls. |
+
+**New file structure:**
+- `app/Contracts/ServiceClientInterface.php` — contract for all microservice clients
+- `app/Services/BaseService.php` — abstract HTTP client with shared Guzzle logic
+- `app/Services/UserService.php`, `ProductService.php`, `OrderService.php` — one service per microservice
+- `app/Auth/IdentityProvider.php` — builds X-User-Id / X-User-Role headers
+- `app/Http/Controllers/UserController.php`, `ProductController.php`, `OrderController.php` — one controller per service
+
+**Removed:**
+- `app/Helpers/ProxyHelper.php` — replaced by `BaseService`
+- `app/Http/Controllers/GatewayController.php` — split into separate controllers per service
+- `routes/api.php` — updated to use new controllers
+
+### Fixed: `Target class [auth] does not exist`
+Added `Illuminate\Auth\AuthServiceProvider` to `config/app.php` providers list.
 
 ### Fixed: Auth middleware alias
-
-The `auth` middleware alias (`\Illuminate\Auth\Middleware\Authenticate`) was added to `app/Http/Kernel.php` so that `middleware('auth:api')` can be resolved in routes.
+Added `'auth' => \Illuminate\Auth\Middleware\Authenticate::class` to `app/Http/Kernel.php`.
 
 ### Fixed: 401 instead of 500 for unauthenticated requests
-
-The exception handler (`app/Exceptions/Handler.php`) now catches `AuthenticationException` and returns a `401` JSON response instead of a generic `500`.
+Added `AuthenticationException` handling to `app/Exceptions/Handler.php`.
 
 ### Fixed: APP_KEY missing in Docker
-
-The `APP_KEY` environment variable was added to `docker-compose.yml` so the Laravel encryption key is available in Docker (the `.env` file is deleted during the Docker build). The fallback key in `config/app.php` was also fixed to be a valid 32-byte key.
+Added `APP_KEY` to `docker-compose.yml` for the api-gateway service.
